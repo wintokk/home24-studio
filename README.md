@@ -1,6 +1,6 @@
-# Push Studio
+# Anyfield
 
-Counts push-ups with the phone's front camera and keeps a daily log. It runs in mobile Safari or Chrome, and you can add it to the home screen.
+Prop your phone up anywhere: a living-room floor, a park, a hotel room. The front camera counts your push-ups and keeps a daily log. It runs in mobile Safari or Chrome, and you can add it to the home screen.
 
 ## Architecture
 

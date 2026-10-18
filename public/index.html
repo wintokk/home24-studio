@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Push Studio</title>
-<meta name="description" content="Counts your push-ups with the front camera and keeps a daily log.">
+<title>Anyfield</title>
+<meta name="description" content="Prop your phone up anywhere. The camera counts your push-ups and keeps a daily log.">
 <meta name="theme-color" content="#0B120D">
 <meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Push Studio">
+<meta name="apple-mobile-web-app-title" content="Anyfield">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-192.png">
@@ -414,7 +414,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 <!-- =================== HOME =================== -->
 <main id="home" class="screen home">
   <header class="top">
-    <div><h1 class="brand">Push Studio</h1><p class="top-date" id="todayDate"></p></div>
+    <div><h1 class="brand">Anyfield</h1><p class="top-date" id="todayDate"></p></div>
     <button class="glass round press acct" id="acctBtn" type="button" aria-label="Account" hidden></button>
   </header>
 
@@ -906,7 +906,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   /* ---------- Firebase: Google sign-in, Firestore sync, group leaderboards ---------- */
   var FB_URL = 'https://www.gstatic.com/firebasejs/12.19.0/';
   var fb = null;
-  function warn(e) { try { console.warn('[push-studio]', e && (e.code || e.message) || e); } catch (x) {} }
+  function warn(e) { try { console.warn('[anyfield]', e && (e.code || e.message) || e); } catch (x) {} }
   function syncFail(e) { warn(e); toast(e && e.code === 'permission-denied' ? 'The server refused that change' : 'That change didn’t sync. It will retry when you’re online.'); }
   function userRef() { return fb.FS.doc(fb.db, 'users', Cloud.user.uid); }
   async function cloudConfig() {
@@ -941,7 +941,9 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   async function signIn() {
     if (!fb) { toast('Sign-in isn’t set up for this copy of the app'); return; }
     var p = new fb.AU.GoogleAuthProvider(); p.setCustomParameters({ prompt: 'select_account' });
-    // Popup first everywhere: redirect sign-in breaks in Safari when the app and the auth domain differ.
+    // Redirect only works in Safari when the auth handler is on this same origin (Firebase Hosting).
+    // Home-screen apps can't run popups reliably, so they use redirect there; everything else uses a popup.
+    if (isStandalone() && fb.app.options.authDomain === location.host) { fb.AU.signInWithRedirect(fb.auth, p); return; }
     try { await fb.AU.signInWithPopup(fb.auth, p); }
     catch (e) {
       if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) { fb.AU.signInWithRedirect(fb.auth, p); return; }
@@ -1747,7 +1749,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     catch (e) { inp.select(); }
   });
   $('#inviteShare').addEventListener('click', function () {
-    if (navigator.share) navigator.share({ title: 'Join ' + (Board.name || 'my push-up group'), text: 'Daily push-ups, counted by the camera. Join my group:', url: $('#inviteLink').value }).catch(function () {});
+    if (navigator.share) navigator.share({ title: 'Join ' + (Board.name || 'my push-up group'), text: 'Daily push-ups on Anyfield, counted by the phone camera. Join my group:', url: $('#inviteLink').value }).catch(function () {});
   });
   $('#groupLeave').addEventListener('click', function () {
     var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to leave'; return; }

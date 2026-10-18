@@ -1,7 +1,7 @@
 {
-  "name": "Push Studio",
-  "short_name": "Push Studio",
-  "description": "Counts your push-ups with the front camera and keeps a daily log.",
+  "name": "Anyfield",
+  "short_name": "Anyfield",
+  "description": "Prop your phone up anywhere. The camera counts your push-ups and keeps a daily log.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
