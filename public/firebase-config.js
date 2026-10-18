@@ -14,4 +14,11 @@
 // };
 //
 // These values identify the project; they aren't secrets. Access is controlled by firestore.rules.
-window.HOME24_FIREBASE = null;
+window.HOME24_FIREBASE = {
+  apiKey: "AIzaSyA_TwG24MnY7SKJ6ieopw6c_-CVgMLzSDM",
+  authDomain: "home24-studio.firebaseapp.com",
+  projectId: "home24-studio",
+  storageBucket: "home24-studio.firebasestorage.app",
+  messagingSenderId: "406293937840",
+  appId: "1:406293937840:web:f0df4ba9054cad54b08575"
+};
