@@ -33,31 +33,204 @@ front camera (getUserMedia, facingMode: user)
 
 Video never leaves the device. Apart from Firebase sign-in and sync, the only network requests are for static assets: the MediaPipe JS and WASM from jsDelivr, the pose model from Google's MediaPipe model bucket, and the Archivo font from Google Fonts. After the first load the browser caches them.
 
-### Counting logic
+## Core algorithm
 
-The logic sits in a pure block in `index.html` between `LOGIC-START` and `LOGIC-END`. It doesn't touch the DOM, so Node can test it.
+The phone can sit anywhere: on the floor in front of you, off to the side, or at an angle. No single body measurement works from every one of those spots. So the app measures several things at once, then uses a short calibration to learn which measurement works best from where the phone sits and what your top and bottom positions look like there. After that, counting is a hysteresis state machine on one number per frame, scaled so that 0 is your top and 1 is your bottom.
 
-- **Signals.** Each frame the app computes six candidate signals from the landmarks:
-  - elbow angle
-  - shoulder-to-wrist drop
-  - nose-to-wrist drop
-  - shoulder height
-  - head height
-  - shoulder width (how far the body is from the phone)
+```
+landmarks ──► 6 candidate signals ──► calibration picks one + its top/bottom ──► progress p ∈ [0,1] ──► rep state machine ──► count, cues
+```
 
-  Each signal has a type that controls how it adapts when the phone moves:
-  - *absolute* (elbow angle): doesn't depend on where the phone sits
-  - *shift* (the drop and height signals): moves when the phone moves
-  - *ratio* (shoulder width): scales with distance from the phone
-- **`Calibrator`.** The user holds the top position for 1.5 s, and that hold sets the top value and noise level for every signal. The user then does 3 slow reps, and each signal is tracked in parallel.
-  - **What counts as a calibration rep:** it lasts at least 0.6 s, finishes at least 0.9 s after the previous one, and is at least 60% as deep as the deepest rep on that signal. This drops nods, glances at the screen and shuffling into position.
-  - **When it finishes:** once two signals agree on 3 reps, and no sooner than 3 s after the start. One signal that dips twice per push-up (elbow angle seen from the front does this) can't end calibration early.
-  - **Which signal wins:** the best separation-to-noise ratio (median rep depth divided by resting noise) among signals whose count matches the agreed one. Head signals are weighted down because glancing at the phone moves them.
-  - **Result:** saved as a *setup*: the signal plus its top and bottom values. Each phone placement gets its own setup, so different people and different spots each get their own calibration.
-- **`RepCounter`.** Each frame's value is turned into progress, 0 at the top and 1 at the calibrated bottom. A rep counts when progress goes past the depth threshold (default 0.7, set in Settings) and back below 0.3, at least 0.6 s after the previous rep.
-  - **Shallow reps:** once a dip passes halfway and lasts 0.35 s, turning back up by 0.1 before reaching the depth line fires `shallow` ("Lower", said while you're still down). If you then go deeper, the rep counts. If you come back up instead, `nocount` fires at the top. Quick nods never trigger either.
-  - **Arming.** A set starts after the user holds still near the top for about 1 s. For *shift* and *ratio* signals, the top value is reset at that point, so a phone placed slightly differently from last time still counts correctly.
-  - **Dropouts.** If tracking drops out for 0.3 to 3 s mid-rep and the user comes back at the top, the rep is counted.
+All of this lives in a pure block in `public/index.html`, between `LOGIC-START` and `LOGIC-END` (`SIGNALS`, `Calibrator`, `RepCounter`). It doesn't touch the DOM, so `test/logic.test.js` runs it in Node against simulated signals.
+
+### 1. Pose input
+
+- **Model:** MediaPipe `PoseLandmarker`, lite model by default (Settings → Body tracking → Precise switches to full). It runs in `VIDEO` mode, tracks one person, and uses a 0.5 confidence for detection, presence and tracking. It runs on the GPU when it can and falls back to the CPU.
+- **Frames:** each new camera frame is processed once. The loop skips repaints that bring no new video frame.
+- **Landmarks:** the app uses the nose (0), shoulders (11, 12), elbows (13, 14) and wrists (15, 16). A landmark with visibility below 0.5 counts as missing.
+- **Coordinates:** normalized to the image, with y increasing downward. Angles and distances are computed in pixels (x·W, y·H) so the frame's aspect ratio doesn't distort them.
+
+### 2. Signals
+
+Each frame becomes six candidate numbers. A signal is `null` when the landmarks it needs aren't visible.
+
+| Key | Definition | Kind | Works best from |
+|---|---|---|---|
+| `elbow` | Mean over visible arms of the angle shoulder–elbow–wrist, in degrees | absolute | the side |
+| `chest` | mean y of the wrists − mean y of the shoulders | shift | the side or an angle |
+| `head` | mean y of the wrists − y of the nose | shift | the side |
+| `shoulderY` | mean y of the shoulders | shift | in front or the side |
+| `headY` | y of the nose | shift | in front (weighted down, see below) |
+| `scale` | shoulder width in pixels ÷ frame height | ratio | in front (you get closer to the phone at the bottom) |
+
+The **kind** says how a signal changes when the phone is placed slightly differently from the day you calibrated:
+- **absolute:** an angle, so it doesn't depend on where the phone sits.
+- **shift:** moving the phone adds an offset.
+- **ratio:** moving the phone nearer or farther scales the value.
+
+Each signal also has three tolerances:
+
+| | elbow | shift signals | scale | Meaning |
+|---|---|---|---|---|
+| `minSep` | 25° | 0.035 | 0.02 | smallest movement that can be a rep |
+| `stab` | 6° | 0.012 | 0.008 | largest wobble that still counts as holding still |
+| `floor` | 2° | 0.004 | 0.003 | lower bound on noise when scoring, so a perfectly still signal can't win by dividing by ~0 |
+
+Shift and ratio values are fractions of the frame height. Every signal is smoothed with an exponential moving average, `v ← v + 0.5·(x − v)`, which adds about one frame of lag at 30 fps.
+
+### 3. Calibration (`Calibrator`)
+
+Calibration runs once per phone placement. The result is saved as a *setup*.
+
+```mermaid
+flowchart LR
+  A[8 s countdown] --> B[Hold the top<br/>1.5 s still]
+  B --> C[3 slow push-ups<br/>all signals tracked]
+  C --> D{2 signals agree<br/>on 3 reps?}
+  D -- no --> C
+  D -- yes --> E[Pick the best<br/>agreeing signal]
+  E --> F[Setup: signal, top, bottom, noise]
+```
+
+**Phase 1: hold.**
+- The app looks at a sliding 1.5 s window, needing at least 8 frames.
+- For every signal visible in at least 80% of those frames, it records the mean, μₖ, as that signal's **top**, and the standard deviation, σₖ, as its **resting noise**.
+- The hold is accepted when at least 75% of those signals have σₖ ≤ `stab`ₖ.
+- It fails after 25 s with "couldn't find a steady starting position".
+
+**Phase 2: reps.** Every signal gets its own tracker, run on each frame:
+
+```
+d  = x − μ                        how far from the top
+d⁺ = max d,  d⁻ = min d           running extremes
+s  = sign of the first |d| ≥ minSep   which way "down" is for this signal; also starts the rep clock
+p  = d / (s>0 ? d⁺ : d⁻)          depth relative to the deepest point so far (≈1 at the bottom)
+
+up   → down  when p > 0.7
+down → up    when p < 0.3          → rep candidate; its peak is the extreme d reached while down
+```
+
+The rules for what counts as a rep are what keep calibration from finishing early:
+- **Duration:** a candidate is kept only if it lasts at least **600 ms**, from leaving the top (p > 0.3) to coming back (p < 0.3), and ends at least **900 ms** after the previous kept rep. That rejects nods, glances and quick shuffles.
+- **Depth:** a rep is *valid* only if |peak| ≥ **0.6 ×** the deepest peak on that signal. This is recomputed every frame, so a wiggle that counted before the first real push-up is dropped as soon as a real one arrives.
+
+**Scoring.** Each signal is scored as a separation-to-noise ratio:
+
+```
+Sₖ = wₖ · median|validPeaks| / max(σₖ, floorₖ)        (0 if median|peak| < minSepₖ)
+w  = 1.25 for elbow, 0.6 for head and headY, 1 otherwise
+```
+
+Elbow angle gets a bonus because it doesn't depend on where the phone sits. Head signals are weighted down because glancing at the screen moves them.
+
+**Agreement.** Let K be the signals with Sₖ ≥ 4, and nₖ the number of valid reps each has seen. The rep count shown and spoken during calibration is
+
+```
+N = second-largest nₖ over K        (the largest if K has one signal)
+```
+
+So **two separate measurements must both see a push-up** before it counts. One signal that dips twice per push-up (elbow angle seen from the front does this) can't end calibration early. A signal that misses reps doesn't block it either. Calibration finishes when N ≥ 3, and no sooner than 3 s after the reps phase started. After 40 s it settles on whatever it has, or fails with "couldn't pick out a clear up-and-down motion".
+
+**Selection.** Candidates are signals with at least 2 valid reps and Sₖ > 0. The app prefers those whose count equals N, then those within 1 of N, then any. It takes the highest score among them and saves:
+
+```
+setup = { signal, up: μ, down: μ + median(validPeaks), noise: σ, score: S,
+          quality: S ≥ 15 ? strong : S ≥ 7 ? good : weak }
+```
+
+A *weak* result shows a warning suggesting a better phone position.
+
+### 4. Live counting (`RepCounter`)
+
+Each smoothed value is converted to progress through your calibrated range:
+
+```
+p = (v − up) / (down − up)          0 = your top, 1 = your calibrated bottom
+D = depth line (Settings, default 0.70, range 0.50–0.95)
+U = min(0.30, D − 0.20)             "back at the top" line
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> arming
+  arming --> up: still near the top for 1 s (re-baseline)
+  up --> down: p ≥ D
+  down --> up: p < U and timing guards pass → COUNT
+  up --> up: shallow attempt → "Lower" / "Not counted"
+```
+
+**Arming and re-baseline.** A set starts once the values over 1 s have a standard deviation below `tol = max(stab, 3σ_cal)` and their mean progress p̄ is within 0.6 of the top. If p̄ is within 0.35, the top is re-anchored to the current mean m, so a phone placed a little differently from calibration day still counts correctly:
+
+| Kind | up ← | down ← |
+|---|---|---|
+| shift | m | m + (down − up) |
+| ratio | m | m · down / up |
+| absolute | unchanged | unchanged |
+
+**Counting.** A rep is counted on the way back up: down → up when p < U. Three guards apply:
+- at least 200 ms since crossing the depth line;
+- at least 600 ms since the previous rep, so a bounce at the bottom counts once;
+- at least 450 ms since the dip started, so a nod can't count.
+
+**Shallow-rep cues.** While in `up`, the app tracks the current dip: its start time t₀ (the first frame with p > U) and its deepest point e = max p.
+
+```
+attempt  = e ≥ 0.45  and  t − t₀ ≥ 350 ms
+shallow  = attempt, not yet cued, and p ≤ e − 0.10      → "Lower" (once per dip)
+nocount  = attempt and p < 0.15                        → "Not counted. Go lower on the next one"
+```
+
+- **When "Lower" fires:** when you start turning back up short of the depth line, while you're still low. If you then go deeper, you cross D and the rep counts. If you come up instead, "Not counted" shows at the top.
+- **What can't trigger it:** a nod is too short to be an attempt, and a pause on the way down never drops by 0.10, so neither triggers a cue.
+
+**Tracking loss.**
+- **Reporting:** no value for more than 1 s (2.5 s before the first sighting) emits `lost`; the next value emits `found`.
+- **Recovery:** after any gap longer than 250 ms the smoothing restarts. If you were partway down (e ≥ 0.5), the gap lasted 0.3–3 s, and you're back at the top, the rep counts. This covers the common case of your face getting too close to a floor-level phone at the bottom.
+
+### 5. Parameters
+
+| Constant | Value | Where | Why |
+|---|---|---|---|
+| EMA α | 0.5 | both | removes landmark jitter, about 1 frame of lag |
+| hold window | 1.5 s, ≥ 8 frames | Calibrator | long enough to measure resting noise |
+| hold stability | ≥ 75% of signals with σ ≤ stab | Calibrator | lets one jittery landmark through |
+| hysteresis | 0.7 / 0.3 | calibration trackers | no chatter around one threshold |
+| `MIN_REP_MS` | 600 ms | calibration | nods and glances are shorter |
+| `GAP_MS` | 900 ms | calibration | a double dip within one push-up is closer together |
+| `KEEP` | 0.6 | calibration | drops wiggles smaller than real reps |
+| weights | elbow 1.25, head 0.6, headY 0.6 | scoring | prefer placement-independent signals, avoid head motion |
+| agreement | second-largest count over Sₖ ≥ 4 | calibration | two measurements must agree |
+| finish | N ≥ 3, ≥ 3 s, timeout 40 s | calibration | |
+| D, U | 0.70, min(0.3, D − 0.2) | counter | depth line and back-at-top line |
+| refractory | 600 ms | counter | one count per rep despite bounces |
+| attempt | e ≥ 0.45 and ≥ 350 ms | counter | only real dips get a cue |
+| turn | 0.10 | counter | larger than tracking noise in progress units |
+| re-baseline | \|p̄\| ≤ 0.35, arm if ≤ 0.6 | counter | small phone moves are corrected, big ones need recalibration |
+
+### 6. Failure modes it handles
+
+| Problem | How it's handled | Test in `test/logic.test.js` |
+|---|---|---|
+| Nods, glances and shuffling counted during calibration | 600 ms / 900 ms timing and the 60% depth rule | *nods and shuffles: waits for the 3rd real push-up* |
+| A signal that dips twice per push-up ends calibration early | Two-signal agreement; selection prefers agreeing signals | *double-dipping signal: waits for the 3rd push-up / not chosen* |
+| The head moves when you look at the screen | Head signals weighted 0.6, so shoulders win from the front | *front view tracks shoulders, not the head* |
+| "Lower" heard after the rep, then the next rep counts | Cue fires at the turn while you're still down; "not counted" only at the top | *shallow rep: not counted, one cue, cue before reaching the top*, *cue then deeper: counts* |
+| False "lower" on full reps or pauses | Attempt rule and the 0.10 turn | *no "lower" cue on full reps*, *pause halfway then finish* |
+| Bounce at the bottom counted twice | Single `down` state and 600 ms refractory | *bounce at the bottom: no double counts* |
+| Phone not in exactly the same spot | Re-baseline when arming | *phone moved a little since calibration* |
+| Tracking lost near the floor | Gap recovery | *tracking dropout reported and recovered* |
+| Fast reps missed | Timing rules allow 0.9 s reps | *fast reps (0.9 s) all counted* |
+
+Run against the code before these fixes, the suite fails 7 checks.
+
+### 7. Limitations
+
+- **One person:** the model tracks one person; others in frame can confuse it.
+- **Depth is relative to calibration:** "deep enough" is measured against your calibration reps. Shallow calibration reps make counting lenient. Recalibrate if your form or the phone position changes.
+- **Big phone moves:** if the phone moved a lot (|p̄| > 0.35 when arming), the top isn't re-anchored. Beyond 0.6 the set never starts and you need to recalibrate.
+- **Push-ups only:** the signals and thresholds are tuned for push-ups. The pipeline itself (pose → one number per frame → calibrate → hysteresis counter) carries over to other exercises, but each needs its own signals and limits.
+
+## App
 
 ### UI
 
@@ -134,7 +307,8 @@ python3 -m http.server 8000 --directory public    # desktop: http://localhost:80
 ## Test
 
 ```sh
-node test/logic.test.js
+node test/logic.test.js                 # 30 checks
+node test/logic.test.js path/to/index.html   # run the same checks against another copy of the app
 ```
 
-The tests run calibration and counting against simulated side and front views. They check that the right signal is chosen, that partial reps are caught, that tracking dropouts are handled, that a moved phone still counts correctly, that fast reps are all counted, and that holding still produces no reps.
+The tests generate push-up timelines (holds, reps of chosen depth and speed, pauses, bounces, nods, shuffles, tracking gaps). They turn each into per-signal values as a side camera and a floor-in-front camera would see them, with tracking noise, then run them through `Calibrator` and `RepCounter`. The failure-modes table above lists which check covers which behaviour.
