@@ -567,7 +567,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 <div class="sheet glass" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
   <div class="grip"></div>
   <div class="sheet-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-  <div class="row" id="acctRow" hidden><div style="min-width:0"><span class="lbl" id="acctName"></span><p class="hint" id="acctSub"></p></div><button class="btn plain press" id="acctToggle" type="button" style="width:auto;height:42px;flex:none"></button></div>
+  <div class="row" id="acctRow" hidden style="flex-wrap:wrap"><div style="min-width:0;flex:1 1 200px"><span class="lbl" id="acctName"></span><p class="hint" id="acctSub"></p></div><button class="btn plain press" id="acctToggle" type="button" style="width:auto;height:44px;flex:none"></button></div>
   <div class="row"><label for="goalInput">Daily goal</label>
     <div class="stepper"><button type="button" data-goal="-5" aria-label="5 fewer">−</button><input id="goalInput" type="number" inputmode="numeric" min="1" max="2000"><button type="button" data-goal="5" aria-label="5 more">+</button></div></div>
   <div class="row col"><label for="depthInput">How deep a rep must go <output id="depthOut" for="depthInput"></output></label>
@@ -863,11 +863,336 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 
   function pad(n) { return String(n).padStart(2, '0'); }
   function dkey(d) { d = d || new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
-  function dayTotal(k) { var d = S.log[k]; return d ? d.sets.reduce(function (a, s) { return a + s.reps; }, 0) : 0; }
-  function activeSetup() { return S.setups.filter(function (s) { return s.id === S.active; })[0] || null; }
+  /* ---------- data: on this device by default, Firestore once signed in ---------- */
+  var Cloud = { on: false, user: null, days: {}, today: [], setups: [], profile: {}, unsub: [], todayUnsub: null, dayKey: null, ready: false };
+  function goalVal() { return Cloud.on ? (Cloud.profile.goal || DEFAULTS.goal) : S.goal; }
+  function depthVal() { return Cloud.on ? (Cloud.profile.depth || DEFAULTS.depth) : S.depth; }
+  function setupsList() { return Cloud.on ? Cloud.setups : S.setups; }
+  function localDayTotal(k) { var d = S.log[k]; return d ? d.sets.reduce(function (a, s) { return a + s.reps; }, 0) : 0; }
+  function dayTotal(k) { return Cloud.on ? (Cloud.days[k] || 0) : localDayTotal(k); }
+  function dayKeys() { return Object.keys(Cloud.on ? Cloud.days : S.log); }
+  function todaySets() { return Cloud.on ? Cloud.today : ((S.log[dkey()] && S.log[dkey()].sets) || []); }
+  function activeSetup() {
+    var l = setupsList();
+    return l.filter(function (s) { return s.id === S.active; })[0] || l[l.length - 1] || null;
+  }
   function addSet(reps, setupId, manual) {
-    var k = dkey(); (S.log[k] = S.log[k] || { sets: [] }).sets.push({ t: Date.now(), reps: reps, setup: setupId || null, manual: !!manual });
-    save(); renderHome();
+    var rec = { day: dkey(), t: Date.now(), reps: reps, setup: setupId || null, manual: !!manual };
+    if (Cloud.on) cloudAddSet(rec);
+    else { (S.log[rec.day] = S.log[rec.day] || { sets: [] }).sets.push({ t: rec.t, reps: reps, setup: rec.setup, manual: rec.manual }); save(); }
+    renderHome();
+  }
+  function removeSet(s) {
+    if (Cloud.on) cloudRemoveSet(s);
+    else { var arr = (S.log[dkey()] || { sets: [] }).sets, ix = arr.indexOf(s); if (ix >= 0) arr.splice(ix, 1); save(); }
+    renderHome();
+  }
+  function saveSetupRec(st) {
+    if (Cloud.on) fb.FS.setDoc(fb.FS.doc(fb.db, 'users', Cloud.user.uid, 'setups', st.id), st).catch(syncFail);
+    else S.setups.push(st);
+    S.active = st.id; save();
+  }
+  function deleteSetupRec(id) {
+    if (Cloud.on) fb.FS.deleteDoc(fb.FS.doc(fb.db, 'users', Cloud.user.uid, 'setups', id)).catch(syncFail);
+    else S.setups = S.setups.filter(function (x) { return x.id !== id; });
+    if (S.active === id) S.active = null;
+    save();
+  }
+  function setPref(field, value) {
+    if (Cloud.on) { var o = {}; o[field] = value; Cloud.profile[field] = value; fb.FS.setDoc(userRef(), o, { merge: true }).catch(syncFail); }
+    else { S[field] = value; save(); }
+  }
+
+  /* ---------- Firebase: Google sign-in, Firestore sync, group leaderboards ---------- */
+  var FB_URL = 'https://www.gstatic.com/firebasejs/12.19.0/';
+  var fb = null;
+  function warn(e) { try { console.warn('[push-studio]', e && (e.code || e.message) || e); } catch (x) {} }
+  function syncFail(e) { warn(e); toast(e && e.code === 'permission-denied' ? 'The server refused that change' : 'That change didn’t sync. It will retry when you’re online.'); }
+  function userRef() { return fb.FS.doc(fb.db, 'users', Cloud.user.uid); }
+  async function cloudConfig() {
+    try {
+      var r = await fetch('/__/firebase/init.json', { cache: 'no-store' });
+      if (r.ok) { var c = await r.json(); if (c && c.apiKey) { c.authDomain = location.host; return c; } }
+    } catch (e) {}
+    var w = window.HOME24_FIREBASE; return w && w.apiKey ? w : null;
+  }
+  async function initCloud() {
+    var cfg = await cloudConfig(); if (!cfg) return;
+    try {
+      var m = await Promise.all(['app', 'auth', 'firestore'].map(function (n) { return import(FB_URL + 'firebase-' + n + '.js'); }));
+      var A = m[0], AU = m[1], FS = m[2], app = A.initializeApp(cfg), db;
+      try { db = FS.initializeFirestore(app, { localCache: FS.persistentLocalCache({ tabManager: FS.persistentMultipleTabManager() }) }); }
+      catch (e) { db = FS.getFirestore(app); }
+      fb = { app: app, auth: AU.getAuth(app), db: db, AU: AU, FS: FS };
+    } catch (e) { warn(e); return; }
+    renderAccount(); renderBoard();
+    fb.AU.getRedirectResult(fb.auth).catch(function (e) { var m = authError(e); if (m) toast(m); });
+    fb.AU.onAuthStateChanged(fb.auth, function (u) { if (u) startCloud(u); else stopCloud(); });
+    if (pendingJoin() && !fb.auth.currentUser) setTimeout(function () { if (!Cloud.on) showJoinSignIn(); }, 1500);
+  }
+  function isStandalone() { return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
+  function authError(e) {
+    var c = e && e.code || '';
+    if (c === 'auth/popup-closed-by-user' || c === 'auth/cancelled-popup-request' || c === 'auth/redirect-cancelled-by-user') return '';
+    if (c === 'auth/unauthorized-domain') return 'This address isn’t allowed to sign in yet. Add it under Firebase Authentication → Authorized domains.';
+    if (c === 'auth/network-request-failed') return 'No connection. Try signing in again when you’re online.';
+    return 'Sign-in didn’t finish. Try again.';
+  }
+  async function signIn() {
+    if (!fb) { toast('Sign-in isn’t set up for this copy of the app'); return; }
+    var p = new fb.AU.GoogleAuthProvider(); p.setCustomParameters({ prompt: 'select_account' });
+    // Popup first everywhere: redirect sign-in breaks in Safari when the app and the auth domain differ.
+    try { await fb.AU.signInWithPopup(fb.auth, p); }
+    catch (e) {
+      if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) { fb.AU.signInWithRedirect(fb.auth, p); return; }
+      var m = authError(e); if (m) toast(m);
+    }
+  }
+  function signOut() { if (fb) fb.AU.signOut(fb.auth).then(function () { toast('Signed out'); closeSheet(); }); }
+
+  function startCloud(u) {
+    stopCloud(true);
+    var FS = fb.FS, db = fb.db;
+    Cloud.user = { uid: u.uid, name: (u.displayName || (u.email || 'Someone').split('@')[0]).slice(0, 60), photo: (u.photoURL || '').slice(0, 600) };
+    Cloud.on = true; Cloud.days = {}; Cloud.today = []; Cloud.setups = []; Cloud.profile = {}; Cloud.ready = false;
+    var uref = userRef();
+    FS.setDoc(uref, { name: Cloud.user.name, photo: Cloud.user.photo, seen: FS.serverTimestamp() }, { merge: true }).catch(warn);
+    migrateLocal(u.uid);
+    Cloud.unsub.push(FS.onSnapshot(uref, function (s) { Cloud.profile = s.data() || {}; Cloud.ready = true; syncBoardSub(); renderHome(); }, warn));
+    Cloud.unsub.push(FS.onSnapshot(FS.collection(uref, 'days'), function (qs) {
+      var d = {}; qs.forEach(function (x) { d[x.id] = x.data().total || 0; }); Cloud.days = d; renderHome(); }, warn));
+    Cloud.unsub.push(FS.onSnapshot(FS.collection(uref, 'setups'), function (qs) {
+      Cloud.setups = qs.docs.map(function (x) { return x.data(); }).sort(function (a, b) { return (a.created || 0) - (b.created || 0); });
+      renderHome(); if (openEl === $('#setupsSheet')) renderSetups(); }, warn));
+    subToday();
+    renderAccount(); renderBoard(); renderHome(); checkPendingJoin();
+  }
+  function subToday() {
+    if (Cloud.todayUnsub) Cloud.todayUnsub();
+    Cloud.dayKey = dkey();
+    var q = fb.FS.query(fb.FS.collection(fb.db, 'users', Cloud.user.uid, 'sets'), fb.FS.where('day', '==', Cloud.dayKey));
+    Cloud.todayUnsub = fb.FS.onSnapshot(q, function (qs) {
+      Cloud.today = qs.docs.map(function (x) { var d = x.data(); d.id = x.id; return d; }).sort(function (a, b) { return a.t - b.t; });
+      renderHome(); }, warn);
+  }
+  function stopCloud(keepUser) {
+    Cloud.unsub.forEach(function (f) { f(); }); Cloud.unsub = [];
+    if (Cloud.todayUnsub) { Cloud.todayUnsub(); Cloud.todayUnsub = null; }
+    stopBoardSub();
+    if (!keepUser) { Cloud.on = false; Cloud.user = null; Cloud.ready = false; renderAccount(); renderBoard(); renderHome(); }
+  }
+  // First sign-in on a device: move its on-device log and setups into the account, once.
+  function migrateLocal(uid) {
+    S.migrated = S.migrated || {};
+    if (S.migrated[uid]) return;
+    var FS = fb.FS, db = fb.db, uref = userRef(), ops = [], had = Object.keys(S.log).length;
+    S.setups.forEach(function (st) { ops.push(function (b) { b.set(FS.doc(uref, 'setups', st.id), st); }); });
+    Object.keys(S.log).forEach(function (k) {
+      var tot = 0;
+      S.log[k].sets.forEach(function (s) {
+        tot += s.reps;
+        ops.push(function (b) { b.set(FS.doc(FS.collection(uref, 'sets')), { day: k, t: s.t, reps: s.reps, setup: s.setup || null, manual: !!s.manual }); });
+      });
+      if (tot) ops.push(function (b) { b.set(FS.doc(uref, 'days', k), { total: FS.increment(tot), updatedAt: FS.serverTimestamp() }, { merge: true }); });
+    });
+    if (S.goal !== DEFAULTS.goal || S.depth !== DEFAULTS.depth) ops.push(function (b) { b.set(uref, { goal: S.goal, depth: S.depth }, { merge: true }); });
+    for (var i = 0; i < ops.length; i += 400) { var b = FS.writeBatch(db); ops.slice(i, i + 400).forEach(function (f) { f(b); }); b.commit().catch(syncFail); }
+    S.migrated[uid] = true; S.log = {}; S.setups = []; save();
+    if (had) toast('Your log on this device is now synced');
+  }
+  function scoreRef(bid, day) { return fb.FS.doc(fb.db, 'boards', bid, 'scores', day + '_' + Cloud.user.uid); }
+  function scoreFields(day, total) { return { uid: Cloud.user.uid, day: day, total: total, name: Cloud.user.name, photo: Cloud.user.photo, updatedAt: fb.FS.serverTimestamp() }; }
+  function myBoards() { return (Cloud.profile.boards || []).slice(0, 10); }
+  function boardWrite(day, delta) { // separate batch, so a group problem never blocks your own log
+    var ids = myBoards(); if (!ids.length) return;
+    var b = fb.FS.writeBatch(fb.db);
+    ids.forEach(function (bid) { b.set(scoreRef(bid, day), scoreFields(day, fb.FS.increment(delta)), { merge: true }); });
+    b.commit().catch(warn);
+  }
+  function cloudAddSet(rec) {
+    var FS = fb.FS, uref = userRef(), b = FS.writeBatch(fb.db);
+    b.set(FS.doc(FS.collection(uref, 'sets')), rec);
+    b.set(FS.doc(uref, 'days', rec.day), { total: FS.increment(rec.reps), updatedAt: FS.serverTimestamp() }, { merge: true });
+    b.commit().catch(syncFail);
+    boardWrite(rec.day, rec.reps);
+  }
+  function cloudRemoveSet(s) {
+    if (!s.id) return;
+    var FS = fb.FS, uref = userRef(), b = FS.writeBatch(fb.db), day = s.day || dkey();
+    b.delete(FS.doc(uref, 'sets', s.id));
+    b.set(FS.doc(uref, 'days', day), { total: FS.increment(-s.reps), updatedAt: FS.serverTimestamp() }, { merge: true });
+    b.commit().catch(syncFail);
+    boardWrite(day, -s.reps);
+  }
+  async function exportRows() {
+    var rows = [['date', 'time', 'reps', 'source']], names = {};
+    setupsList().forEach(function (x) { names[x.id] = x.name; });
+    var push = function (k, s) { rows.push([k, new Date(s.t).toTimeString().slice(0, 5), s.reps, s.manual ? 'by hand' : (names[s.setup] || 'camera')]); };
+    if (Cloud.on) {
+      var qs = await fb.FS.getDocs(fb.FS.collection(fb.db, 'users', Cloud.user.uid, 'sets'));
+      qs.docs.map(function (x) { return x.data(); }).sort(function (a, b) { return a.t - b.t; }).forEach(function (s) { push(s.day, s); });
+    } else Object.keys(S.log).sort().forEach(function (k) { S.log[k].sets.forEach(function (s) { push(k, s); }); });
+    return rows;
+  }
+
+  /* groups: the board id is the invite; everyone sees daily totals, never individual sets */
+  var Board = { id: null, name: '', owner: null, members: {}, scores: [], unsub: [], week: null };
+  function weekStartKey() { var d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return dkey(d); }
+  function syncBoardSub() {
+    var ids = myBoards(), want = ids.indexOf(S.board) >= 0 ? S.board : (ids[0] || null);
+    if (want === Board.id && Board.week === weekStartKey()) { renderBoard(); return; }
+    stopBoardSub(); Board.id = want;
+    if (!want) { renderBoard(); return; }
+    var FS = fb.FS, bref = FS.doc(fb.db, 'boards', want); Board.week = weekStartKey();
+    Board.unsub.push(FS.onSnapshot(bref, function (s) { var d = s.data() || {}; Board.name = d.name || 'Group'; Board.owner = d.owner || null; renderBoard(); }, boardErr));
+    Board.unsub.push(FS.onSnapshot(FS.collection(bref, 'members'), function (qs) { var m = {}; qs.forEach(function (x) { m[x.id] = x.data(); }); Board.members = m; Board.tries = 0; renderBoard(); }, boardErr));
+    Board.unsub.push(FS.onSnapshot(FS.query(FS.collection(bref, 'scores'), FS.where('day', '>=', Board.week)), function (qs) { Board.scores = qs.docs.map(function (x) { return x.data(); }); renderBoard(); }, boardErr));
+  }
+  // A listener can attach before a just-made join reaches the server; rules then refuse it. Retry a few times.
+  function boardErr(e) {
+    warn(e);
+    if (e && e.code === 'permission-denied' && (Board.tries || 0) < 5 && !Board.retryT) {
+      Board.tries = (Board.tries || 0) + 1;
+      Board.retryT = setTimeout(function () { Board.retryT = null; stopBoardSub(); if (Cloud.on) syncBoardSub(); }, 1500 * Board.tries);
+    }
+  }
+  function stopBoardSub() { Board.unsub.forEach(function (f) { f(); }); Board.unsub = []; Board.id = null; Board.members = {}; Board.scores = []; Board.name = ''; Board.week = null; }
+  function seedScores(b, bid) { // copy this week's totals so a new member starts with what they've already done
+    var d = new Date(), stop = weekStartKey();
+    for (var i = 0; i < 8; i++) { var k = dkey(d); if (k < stop) break; if (Cloud.days[k] > 0) b.set(scoreRef(bid, k), scoreFields(k, Cloud.days[k])); d.setDate(d.getDate() - 1); }
+  }
+  function joinBatch(b, bid, name) {
+    var FS = fb.FS, bn = {}; bn[bid] = name;
+    b.set(FS.doc(fb.db, 'boards', bid, 'members', Cloud.user.uid), { name: Cloud.user.name, photo: Cloud.user.photo, joinedAt: FS.serverTimestamp() });
+    b.set(userRef(), { boards: FS.arrayUnion(bid), boardNames: bn }, { merge: true });
+    seedScores(b, bid);
+  }
+  function createBoard(name) {
+    var FS = fb.FS, bref = FS.doc(FS.collection(fb.db, 'boards')), b = FS.writeBatch(fb.db);
+    b.set(bref, { name: name, owner: Cloud.user.uid, createdAt: FS.serverTimestamp() });
+    joinBatch(b, bref.id, name);
+    S.board = bref.id; save();
+    b.commit().then(function () { toast('Group created'); }).catch(syncFail);
+    return bref.id;
+  }
+  function joinBoard(bid, name) {
+    var b = fb.FS.writeBatch(fb.db); joinBatch(b, bid, name);
+    S.board = bid; save(); clearJoin();
+    b.commit().then(function () { toast('You joined ' + name); }).catch(syncFail);
+  }
+  function leaveBoard(bid) {
+    var FS = fb.FS, b = FS.writeBatch(fb.db), bn = {}; bn[bid] = FS.deleteField();
+    b.delete(FS.doc(fb.db, 'boards', bid, 'members', Cloud.user.uid));
+    b.set(userRef(), { boards: FS.arrayRemove(bid), boardNames: bn }, { merge: true });
+    if (S.board === bid) { S.board = null; save(); }
+    b.commit().then(function () { toast('You left the group'); }).catch(syncFail);
+  }
+  function inviteLink(bid) { return location.origin + location.pathname + '?join=' + bid; }
+  function pendingJoin() { try { return sessionStorage.getItem('join'); } catch (e) { return null; } }
+  function clearJoin() { try { sessionStorage.removeItem('join'); } catch (e) {} }
+  (function readJoinParam() {
+    try {
+      var j = new URLSearchParams(location.search).get('join');
+      if (j && /^[A-Za-z0-9]{10,40}$/.test(j)) sessionStorage.setItem('join', j);
+      if (j) history.replaceState(null, '', location.pathname + location.hash);
+    } catch (e) {}
+  })();
+  function showJoinSignIn() {
+    $('#joinTitle').textContent = 'Join a group';
+    $('#joinText').textContent = 'You opened an invite to a push-up group. Sign in with Google to join it.';
+    joinButtons([['Sign in with Google', 'google', signIn], ['Not now', 'plain', function () { clearJoin(); closeSheet(); }]]);
+    openSheet('joinSheet');
+  }
+  function checkPendingJoin() {
+    var bid = pendingJoin(); if (!bid || !Cloud.on) return;
+    fb.FS.getDoc(fb.FS.doc(fb.db, 'boards', bid)).then(function (s) {
+      if (!s.exists()) { clearJoin(); closeSheet(); toast('That invite link no longer works'); return; }
+      var name = s.data().name || 'Group';
+      if (myBoards().indexOf(bid) >= 0) { clearJoin(); S.board = bid; save(); syncBoardSub(); closeSheet(); toast('You’re already in ' + name); return; }
+      $('#joinTitle').textContent = 'Join ' + name + '?';
+      $('#joinText').textContent = 'Members see each other’s daily push-up totals. Your individual sets stay private.';
+      joinButtons([['Join group', 'prime', function () { closeSheet(); joinBoard(bid, name); }], ['Not now', 'plain', function () { clearJoin(); closeSheet(); }]]);
+      openSheet('joinSheet');
+    }).catch(function (e) { warn(e); clearJoin(); toast('Couldn’t open that invite'); });
+  }
+  function joinButtons(list) {
+    var box = $('#joinBtns'); box.innerHTML = '';
+    list.forEach(function (it) {
+      var b = document.createElement('button'); b.type = 'button';
+      b.className = it[1] === 'prime' ? 'glass prime btn press' : it[1] === 'google' ? 'btn google press' : 'btn plain press';
+      if (it[1] === 'google') b.innerHTML = GOOGLE_G;
+      b.appendChild(document.createTextNode(it[0])); b.addEventListener('click', it[2]); box.appendChild(b);
+    });
+  }
+  var GOOGLE_G = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.6 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6c-.3 1.4-1 2.6-2.2 3.4v2.8h3.6c2-1.9 3.2-4.7 3.2-8.3z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.4-2.7l-3.6-2.8c-1 .7-2.3 1.1-3.8 1.1-2.9 0-5.4-2-6.3-4.6H2v2.9C3.8 20.5 7.6 23 12 23z"/><path fill="#FBBC05" d="M5.7 14c-.2-.7-.4-1.3-.4-2s.1-1.4.4-2V7.1H2C1.4 8.6 1 10.3 1 12s.4 3.4 1 4.9L5.7 14z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2C17.5 2.1 15 1 12 1 7.6 1 3.8 3.5 2 7.1L5.7 10c.9-2.6 3.4-4.6 6.3-4.6z"/></svg>';
+
+  function faceEl(name, photo) {
+    var f = document.createElement('span'); f.className = 'face';
+    if (photo) { var im = document.createElement('img'); im.alt = ''; im.referrerPolicy = 'no-referrer'; im.src = photo; im.onerror = function () { f.textContent = (name || '?').trim().charAt(0).toUpperCase(); }; f.appendChild(im); }
+    else f.textContent = (name || '?').trim().charAt(0).toUpperCase();
+    return f;
+  }
+  function renderAccount() {
+    var btn = $('#acctBtn'), row = $('#acctRow');
+    if (!fb) { btn.hidden = true; row.hidden = true; return; }
+    btn.hidden = false; row.hidden = false; btn.innerHTML = '';
+    if (Cloud.on) { btn.appendChild(faceEl(Cloud.user.name, Cloud.user.photo)); btn.setAttribute('aria-label', 'Account: ' + Cloud.user.name); }
+    else { btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 19.5c1.4-3.2 4-4.8 7.2-4.8s5.8 1.6 7.2 4.8"/></svg>'; btn.setAttribute('aria-label', 'Sign in'); }
+    $('#acctName').textContent = Cloud.on ? Cloud.user.name : 'Not signed in';
+    $('#acctSub').textContent = Cloud.on ? 'Your log syncs to every device you sign in on.' : 'Sign in to sync your log across devices and join a group leaderboard.';
+    $('#acctToggle').textContent = Cloud.on ? 'Sign out' : 'Sign in with Google';
+    $('#storeHint').textContent = Cloud.on ? 'Your log and setups are saved to your account. Groups only see daily totals.' : 'Your log and setups are stored on this device only.';
+  }
+  function renderBoard() {
+    var blk = $('#boardBlock'), body = $('#boardBody'), act = $('#boardAction');
+    if (!fb) { blk.hidden = true; return; }
+    blk.hidden = false; body.innerHTML = ''; act.hidden = true; $('#boardTitle').textContent = 'Leaderboard';
+    var p = function (text) { var e = document.createElement('p'); e.className = 'empty'; e.textContent = text; body.appendChild(e); };
+    var button = function (label, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = cls; if (cls.indexOf('google') >= 0) b.innerHTML = GOOGLE_G; b.appendChild(document.createTextNode(label)); b.addEventListener('click', fn); body.appendChild(b); return b; };
+    if (!Cloud.on) { p('Sign in to sync your log across your iPhone and iPad and compete with friends.'); button('Sign in with Google', 'btn google press', signIn); return; }
+    if (!Cloud.ready) { p('Loading your groups…'); return; }
+    if (!Board.id) { p('Start a group and send the link to friends. Everyone sees daily totals; individual sets stay private.'); button('Start a group', 'glass btn press', openGroupSheet); return; }
+    $('#boardTitle').textContent = Board.name || 'Group'; act.hidden = false;
+    var ids = myBoards(), names = Cloud.profile.boardNames || {};
+    if (ids.length > 1) {
+      var tabs = document.createElement('div'); tabs.className = 'board-tabs';
+      ids.forEach(function (id) { var b = document.createElement('button'); b.type = 'button'; b.textContent = names[id] || 'Group'; b.setAttribute('aria-pressed', String(id === Board.id)); b.addEventListener('click', function () { S.board = id; save(); syncBoardSub(); }); tabs.appendChild(b); });
+      body.appendChild(tabs);
+    }
+    var seg = document.createElement('div'); seg.className = 'seg small'; seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', 'Ranking period');
+    [['today', 'Today'], ['week', 'This week']].forEach(function (v) {
+      var l = document.createElement('label'); l.innerHTML = '<input type="radio" name="bview"><span></span>';
+      var r = l.firstChild; r.value = v[0]; r.checked = (S.boardView || 'today') === v[0]; l.lastChild.textContent = v[1];
+      r.addEventListener('change', function () { S.boardView = v[0]; save(); renderBoard(); }); seg.appendChild(l);
+    });
+    body.appendChild(seg);
+    var today = dkey(), view = S.boardView || 'today', agg = {};
+    Object.keys(Board.members).forEach(function (uid) { var m = Board.members[uid]; agg[uid] = { uid: uid, name: m.name || 'Someone', photo: m.photo || '', total: 0 }; });
+    Board.scores.forEach(function (s) { if (view === 'today' && s.day !== today) return; if (agg[s.uid]) agg[s.uid].total += s.total || 0; });
+    var rows = Object.keys(agg).map(function (k) { return agg[k]; }).sort(function (a, b) { return b.total - a.total || a.name.localeCompare(b.name); });
+    var top = rows.length ? Math.max(1, rows[0].total) : 1, ol = document.createElement('ol'); ol.className = 'ranks';
+    rows.forEach(function (r, i) {
+      var pos = i && rows[i - 1].total === r.total ? ol.lastChild.dataset.pos : String(i + 1);
+      var li = document.createElement('li'); li.className = 'rank' + (r.uid === Cloud.user.uid ? ' me' : '') + (pos === '1' && r.total > 0 ? ' lead' : ''); li.dataset.pos = pos;
+      var ps = document.createElement('span'); ps.className = 'pos'; ps.textContent = pos; li.appendChild(ps);
+      li.appendChild(faceEl(r.name, r.photo));
+      var who = document.createElement('span'); who.className = 'who'; var b = document.createElement('b'); b.textContent = r.name;
+      if (r.uid === Cloud.user.uid) { var sm = document.createElement('small'); sm.textContent = 'you'; b.appendChild(sm); }
+      var bar = document.createElement('i'); bar.style.setProperty('--w', Math.round(r.total / top * 100) + '%'); who.appendChild(b); who.appendChild(bar); li.appendChild(who);
+      var n = document.createElement('span'); n.className = 'num'; n.textContent = r.total; li.appendChild(n);
+      ol.appendChild(li);
+    });
+    body.appendChild(ol);
+    if (rows.length < 2) p('Nobody else here yet. Tap Invite and send the link to a friend.');
+  }
+  function openGroupSheet() { $('#groupName').value = ''; openSheet('groupSheet'); }
+  function openInvite() {
+    if (!Board.id) return;
+    $('#inviteTitle').textContent = 'Invite to ' + (Board.name || 'the group');
+    $('#inviteLink').value = inviteLink(Board.id);
+    $('#inviteShare').hidden = !navigator.share;
+    var lv = $('#groupLeave'); lv.textContent = 'Leave this group'; lv.dataset.armed = '';
+    openSheet('inviteSheet');
   }
 
   /* ---------- sound + screen ---------- */
@@ -995,7 +1320,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     return n;
   }
   function renderHome() {
-    var today = dkey(), total = dayTotal(today), goal = S.goal;
+    var today = dkey(), total = dayTotal(today), goal = goalVal();
     $('#todayDate').textContent = new Date().toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
     $('#todayNum').textContent = total;
     $('#hero').classList.toggle('done', total >= goal);
@@ -1008,17 +1333,17 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var st = streak(); $('#statStreak').innerHTML = st + '<small>' + (st === 1 ? 'day' : 'days') + '</small>'; $('#streakCell').classList.toggle('on', st > 0);
     var week = 0, d = new Date(); for (var i = 0; i < 7; i++) { week += dayTotal(dkey(d)); d.setDate(d.getDate() - 1); }
     $('#statWeek').textContent = week;
-    var best = 0; Object.keys(S.log).forEach(function (k) { best = Math.max(best, dayTotal(k)); });
+    var best = 0; dayKeys().forEach(function (k) { best = Math.max(best, dayTotal(k)); });
     $('#statBest').textContent = best;
 
     renderChart();
 
-    var sets = (S.log[today] && S.log[today].sets) || [], ul = $('#setsList');
+    var sets = todaySets(), ul = $('#setsList'), names = {};
+    setupsList().forEach(function (x) { names[x.id] = x.name; });
     ul.innerHTML = '';
     sets.slice().reverse().forEach(function (s) {
       var li = document.createElement('li'); li.className = 'set-row';
-      var setup = S.setups.filter(function (x) { return x.id === s.setup; })[0];
-      var src = s.manual ? 'Added by hand' : (setup ? setup.name : 'Camera');
+      var src = s.manual ? 'Added by hand' : (names[s.setup] || 'Camera');
       li.innerHTML = '<span class="set-time"></span><span class="set-src"></span><span class="set-reps"></span>' +
         '<button class="set-del" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
       li.children[0].textContent = fmtTime(s.t); li.children[1].textContent = src; li.children[2].textContent = s.reps;
@@ -1030,8 +1355,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
           armT = setTimeout(function () { renderHome(); }, 3000); return;
         }
         clearTimeout(armT);
-        var arr = S.log[today].sets, ix = arr.indexOf(s); if (ix >= 0) arr.splice(ix, 1);
-        save(); renderHome(); toast('Set removed');
+        removeSet(s); toast('Set removed');
       });
       ul.appendChild(li);
     });
@@ -1043,22 +1367,22 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var W = 340, H = 136, T = 20, B = 24, Lp = 0, Rp = 48, pw = W - Lp - Rp, ph = H - T - B;
     var days = [], now = new Date();
     for (var i = 13; i >= 0; i--) { var d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i); days.push({ d: d, v: dayTotal(dkey(d)) }); }
-    var max = Math.max(S.goal, Math.max.apply(null, days.map(function (x) { return x.v; }))) * 1.12;
+    var G = goalVal(), max = Math.max(G, Math.max.apply(null, days.map(function (x) { return x.v; }))) * 1.12;
     var step = pw / 14, bw = Math.min(14, step * 0.5);
     function y(v) { return T + ph - (v / max) * ph; }
     var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Push-ups per day for the last 14 days">';
     s += '<defs><linearGradient id="gHeat" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#8DBA45"/><stop offset="1" stop-color="#D9F29A"/></linearGradient>' +
          '<linearGradient id="gKey" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#34492A"/><stop offset="1" stop-color="#6E8F4E"/></linearGradient>' +
          '<filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="3.2"/></filter></defs>';
-    var gy = y(S.goal);
+    var gy = y(G);
     s += '<line class="goal-l" x1="' + Lp + '" x2="' + (W - Rp + 2) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '"/>';
-    s += '<text class="goal-t" x="' + W + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end">Goal <tspan class="goal-n">' + S.goal + '</tspan></text>';
+    s += '<text class="goal-t" x="' + W + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end">Goal <tspan class="goal-n">' + G + '</tspan></text>';
     days.forEach(function (o, i) {
       var cx = Lp + step * i + step / 2, x = cx - bw / 2, today = i === 13;
       s += '<rect x="' + x.toFixed(1) + '" y="' + T + '" width="' + bw.toFixed(1) + '" height="' + ph + '" rx="' + (bw / 2).toFixed(1) + '" fill="rgba(238,242,228,.045)"/>';
       if (o.v > 0) {
-        var top = y(o.v), hgt = Math.max(bw, T + ph - top), yy = T + ph - hgt, fill = o.v >= S.goal ? 'url(#gHeat)' : 'url(#gKey)';
-        if (o.v >= S.goal) s += '<rect x="' + x.toFixed(1) + '" y="' + yy.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="' + (bw / 2).toFixed(1) + '" fill="#B4DB62" opacity=".55" filter="url(#glow)"/>';
+        var top = y(o.v), hgt = Math.max(bw, T + ph - top), yy = T + ph - hgt, fill = o.v >= G ? 'url(#gHeat)' : 'url(#gKey)';
+        if (o.v >= G) s += '<rect x="' + x.toFixed(1) + '" y="' + yy.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="' + (bw / 2).toFixed(1) + '" fill="#B4DB62" opacity=".55" filter="url(#glow)"/>';
         s += '<rect x="' + x.toFixed(1) + '" y="' + yy.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + hgt.toFixed(1) + '" rx="' + (bw / 2).toFixed(1) + '" fill="' + fill + '"/>';
         if (today) s += '<text class="val" x="' + cx.toFixed(1) + '" y="' + (yy - 6).toFixed(1) + '" text-anchor="middle">' + o.v + '</text>';
       }
@@ -1256,7 +1580,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   function saveDraft() {
     var r = calDraft, name = $('#setupName').value.trim() || PLACES[place].label;
     var st = { id: 's' + Date.now().toString(36), name: name, place: place, signal: r.signal, up: r.up, down: r.down, noise: r.noise, score: r.score, quality: r.quality, created: Date.now() };
-    S.setups.push(st); S.active = st.id; save(); return st;
+    saveSetupRec(st); return st;
   }
   $('#toCam').addEventListener('click', enterCam);
   $('#calStart').addEventListener('click', startCalibration);
@@ -1292,8 +1616,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   async function startSession() {
     var st = activeSetup(); if (!st) { openSetup(); return; }
     closeSheet(true); unlockAudio(); keepAwake(true); show('session');
-    sesSetup = st; counter = new L.RepCounter(st, { depth: S.depth }); sesBase = dayTotal(dkey());
-    $('#repNum').textContent = ''; setRep(0); $('#repOf').textContent = st.name; $('#tubeMark').style.bottom = 'calc(' + (S.depth * 100) + '% - 1px)';
+    sesSetup = st; counter = new L.RepCounter(st, { depth: depthVal() }); sesBase = dayTotal(dkey());
+    $('#repNum').textContent = ''; setRep(0); $('#repOf').textContent = st.name; $('#tubeMark').style.bottom = 'calc(' + (depthVal() * 100) + '% - 1px)';
     $('#tubeLiquid').style.height = '0'; $('#repNum').style.setProperty('--p', 0);
     sesStart = Date.now(); $('#sessionTime').textContent = '0:00';
     clearInterval(sesTick); sesTick = setInterval(function () {
@@ -1321,7 +1645,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
         setRep(counter.reps, true); sesStage.flashAt = performance.now(); flash('go'); repSound(counter.reps);
         if (counter.state !== 'arming') setStatus('Tracking', 'live');
         var total = sesBase + counter.reps;
-        if (total === S.goal && S.goalCheered !== dkey()) { S.goalCheered = dkey(); save(); flash('goal'); setTimeout(function () { say('Daily goal done!'); }, 450); setStatus('Daily goal done', 'live', 3000); }
+        if (total === goalVal() && S.goalCheered !== dkey()) { S.goalCheered = dkey(); save(); flash('goal'); setTimeout(function () { say('Daily goal done!'); }, 450); setStatus('Daily goal done', 'live', 3000); }
       }
       else if (e === 'partial') {
         if (t - lastCue > 4000) { lastCue = t; setStatus('Go lower, that one didn’t count', 'warn', 2500); if (S.sound !== 'off') say('Lower'); }
@@ -1350,6 +1674,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
     [sesStage, calStage].forEach(function (s) { if (s && s.running) { s.video.play().catch(function () {}); keepAwake(true); } });
+    if (Cloud.on && Cloud.dayKey !== dkey()) { subToday(); syncBoardSub(); }
     if ($('#home').hidden === false) renderHome();
   });
 
@@ -1366,22 +1691,20 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   });
 
   function syncSettings() {
-    $('#goalInput').value = S.goal;
-    $('#depthInput').value = Math.round(S.depth * 100); $('#depthOut').textContent = Math.round(S.depth * 100) + '%';
+    $('#goalInput').value = goalVal();
+    $('#depthInput').value = Math.round(depthVal() * 100); $('#depthOut').textContent = Math.round(depthVal() * 100) + '%';
     $$('input[name=sound]').forEach(function (r) { r.checked = r.value === S.sound; });
     $$('input[name=model]').forEach(function (r) { r.checked = r.value === S.model; });
   }
-  function setGoal(v) { S.goal = Math.max(1, Math.min(2000, v || 1)); $('#goalInput').value = S.goal; save(); renderHome(); }
-  $$('[data-goal]').forEach(function (b) { b.addEventListener('click', function () { setGoal(S.goal + +b.dataset.goal); }); });
+  function setGoal(v) { v = Math.max(1, Math.min(2000, v || 1)); setPref('goal', v); $('#goalInput').value = v; renderHome(); }
+  $$('[data-goal]').forEach(function (b) { b.addEventListener('click', function () { setGoal(goalVal() + +b.dataset.goal); }); });
   $('#goalInput').addEventListener('change', function () { setGoal(parseInt(this.value, 10)); });
-  $('#depthInput').addEventListener('input', function () { S.depth = +this.value / 100; $('#depthOut').textContent = this.value + '%'; save(); });
+  $('#depthInput').addEventListener('input', function () { $('#depthOut').textContent = this.value + '%'; });
+  $('#depthInput').addEventListener('change', function () { setPref('depth', +this.value / 100); });
   $$('input[name=sound]').forEach(function (r) { r.addEventListener('change', function () { S.sound = r.value; save(); unlockAudio(); if (S.sound === 'beep') beep(); if (S.sound === 'voice') say('Voice on'); }); });
   $$('input[name=model]').forEach(function (r) { r.addEventListener('change', function () { S.model = r.value; save(); }); });
-  $('#exportBtn').addEventListener('click', function () {
-    var rows = [['date', 'time', 'reps', 'source']];
-    Object.keys(S.log).sort().forEach(function (k) { S.log[k].sets.forEach(function (s) {
-      var st = S.setups.filter(function (x) { return x.id === s.setup; })[0];
-      rows.push([k, new Date(s.t).toTimeString().slice(0, 5), s.reps, s.manual ? 'by hand' : (st ? st.name : 'camera')]); }); });
+  $('#exportBtn').addEventListener('click', async function () {
+    var rows; try { rows = await exportRows(); } catch (e) { warn(e); toast('Couldn’t load your log. Try again online.'); return; }
     var csv = rows.map(function (r) { return r.map(function (c) { c = String(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(','); }).join('\n');
     var url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), a = document.createElement('a');
     a.href = url; a.download = 'pushups-' + dkey() + '.csv'; document.body.appendChild(a); a.click(); a.remove();
@@ -1390,27 +1713,50 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 
   function renderSetups() {
     var ul = $('#setupList'); ul.innerHTML = '';
-    S.setups.forEach(function (st) {
+    var list = setupsList(), act = activeSetup();
+    list.forEach(function (st) {
       var li = document.createElement('li'); li.className = 'setup-item';
       li.innerHTML = '<input type="radio" name="activeSetup"><label><span class="nm"></span><br><span class="ds"></span></label><button class="set-del" type="button"></button>';
-      var r = li.children[0], id = 'su-' + st.id; r.id = id; r.checked = st.id === S.active; li.children[1].setAttribute('for', id);
+      var r = li.children[0], id = 'su-' + st.id; r.id = id; r.checked = !!act && st.id === act.id; li.children[1].setAttribute('for', id);
       $('.nm', li).textContent = st.name;
       $('.ds', li).textContent = 'Tracks ' + SIGNALS[st.signal].label.toLowerCase() + ', ' + st.quality + ' signal';
       r.addEventListener('change', function () { S.active = st.id; save(); renderHome(); toast(st.name + ' selected'); });
       var del = li.children[2]; del.textContent = 'Delete';
       del.addEventListener('click', function () {
         if (!del.classList.contains('confirm')) { del.classList.add('confirm'); del.textContent = 'Confirm'; return; }
-        S.setups = S.setups.filter(function (x) { return x.id !== st.id; });
-        if (S.active === st.id) S.active = S.setups.length ? S.setups[S.setups.length - 1].id : null;
-        save(); renderSetups(); renderHome();
+        deleteSetupRec(st.id); renderSetups(); renderHome();
       });
       ul.appendChild(li);
     });
-    $('#setupsEmpty').hidden = S.setups.length > 0;
+    $('#setupsEmpty').hidden = list.length > 0;
   }
 
+  /* ---------- account + groups wiring ---------- */
+  $('#acctBtn').addEventListener('click', function () { if (Cloud.on) { syncSettings(); openSheet('settingsSheet'); } else signIn(); });
+  $('#acctToggle').addEventListener('click', function () { if (Cloud.on) signOut(); else { closeSheet(); signIn(); } });
+  $('#boardAction').addEventListener('click', openInvite);
+  $('#groupCreate').addEventListener('click', function () {
+    var n = $('#groupName').value.trim().slice(0, 40) || ((Cloud.user && Cloud.user.name.split(' ')[0]) || 'My') + '’s crew';
+    closeSheet(); createBoard(n); setTimeout(openInvite, 500);
+  });
+  $('#groupNew').addEventListener('click', function () { closeSheet(); setTimeout(openGroupSheet, 350); });
+  $('#inviteCopy').addEventListener('click', function () {
+    var inp = $('#inviteLink');
+    var done = function () { toast('Invite link copied'); };
+    try { navigator.clipboard.writeText(inp.value).then(done, function () { inp.select(); document.execCommand('copy'); done(); }); }
+    catch (e) { inp.select(); }
+  });
+  $('#inviteShare').addEventListener('click', function () {
+    if (navigator.share) navigator.share({ title: 'Join ' + (Board.name || 'my push-up group'), text: 'Daily push-ups, counted by the camera. Join my group:', url: $('#inviteLink').value }).catch(function () {});
+  });
+  $('#groupLeave').addEventListener('click', function () {
+    var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to leave'; return; }
+    var id = Board.id; closeSheet(); if (id) leaveBoard(id);
+  });
+
   renderHome();
-  if (!S.setups.length && !Object.keys(S.log).length) setTimeout(function () { toast('Start by setting up your camera'); }, 900);
+  initCloud();
+  if (!S.setups.length && !Object.keys(S.log).length && !pendingJoin()) setTimeout(function () { if (!Cloud.on) toast('Start by setting up your camera'); }, 900);
 })();
 </script>
 </body>

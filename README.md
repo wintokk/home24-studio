@@ -14,7 +14,7 @@ public/                     the website (deployed as-is)
   icon-*.png                app icons
 test/logic.test.js          tests for the counting logic, run with Node
 .github/workflows/pages.yml runs the tests, then deploys public/ to GitHub Pages on every push to main
-firebase.json               Firebase Hosting + Firestore config (cloud sync, in progress)
+firebase.json, .firebaserc  Firebase project config (Firestore rules; Hosting optional)
 firestore.rules             Firestore security rules (private logs, group leaderboards)
 ```
 
@@ -66,6 +66,28 @@ Settings, setups, adding a set by hand, and reviewing a finished set happen in b
 The visual style is a dark matcha studio: deep green-black room, whisked-matcha accent, foam-white type set in Archivo. Liquid Glass is used only on controls, following Apple's guidance:
 - **Every browser:** backdrop blur and saturation, a gradient rim highlight, and a highlight that follows your touch.
 - **Chromium only:** the glass edges also bend what's behind them. This uses an SVG displacement map built per element and applied with `backdrop-filter: url()`, which Safari doesn't support.
+
+### Accounts, sync and groups (Firebase)
+
+Firebase project `home24-studio`: Google sign-in, plus Firestore in us-west1, locked down by `firestore.rules`.
+
+- **Signed out:** everything stays in `localStorage`, exactly as before.
+- **Signing in:** the first time you sign in on a device, its local log and setups are copied into your account, and the local copy is cleared.
+- **Signed in:** the app reads and writes Firestore. Its offline cache means a set logged without signal syncs later.
+- **Daily totals:** stored as atomic increments in `users/{uid}/days/{date}`, so two devices logging at once can't overwrite each other.
+- **Groups:** a group's id is its invite link (`?join=<id>`). Members see each other's daily totals, but never individual sets.
+  - Each set you add or remove also bumps your score in every group you belong to.
+  - That happens in a separate write, so a group problem never blocks your own log.
+  - Joining a group copies in your totals for the current week.
+
+| Path | Who can read | Who can write |
+|---|---|---|
+| `users/{uid}/…` (profile, sets, days, setups) | you | you |
+| `boards/{bid}` | any signed-in user, by id only | owner |
+| `boards/{bid}/members/{uid}` | members | yourself (join or leave); the owner can remove you |
+| `boards/{bid}/scores/{day}_{uid}` | members | yourself; checked for allowed fields, a whole-number total from 0 to 5000, and a valid date |
+
+The web config is in `public/firebase-config.js`. On Firebase Hosting the app reads `/__/firebase/init.json` instead.
 
 ### Storage
 
