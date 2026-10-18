@@ -49,8 +49,13 @@ The logic sits in a pure block in `index.html` between `LOGIC-START` and `LOGIC-
   - *absolute* (elbow angle): doesn't depend on where the phone sits
   - *shift* (the drop and height signals): moves when the phone moves
   - *ratio* (shoulder width): scales with distance from the phone
-- **`Calibrator`.** The user holds the top position for 1.5 s, and that hold sets the top value and noise level for every signal. The user then does 3 slow reps, and each signal is tracked in parallel. The signal with the best separation-to-noise ratio wins, scored as median rep depth divided by resting noise. The result is saved as a *setup*: the signal plus its top and bottom values. Each phone placement gets its own setup, so different people and different spots each get their own calibration.
-- **`RepCounter`.** Each frame's value is turned into progress, 0 at the top and 1 at the calibrated bottom. A rep counts when progress goes past the depth threshold (default 0.7, set in Settings) and back below 0.3. Shallow reps fire a `partial` cue and don't count.
+- **`Calibrator`.** The user holds the top position for 1.5 s, and that hold sets the top value and noise level for every signal. The user then does 3 slow reps, and each signal is tracked in parallel.
+  - **What counts as a calibration rep:** it lasts at least 0.6 s, finishes at least 0.9 s after the previous one, and is at least 60% as deep as the deepest rep on that signal. This drops nods, glances at the screen and shuffling into position.
+  - **When it finishes:** once two signals agree on 3 reps, and no sooner than 3 s after the start. One signal that dips twice per push-up (elbow angle seen from the front does this) can't end calibration early.
+  - **Which signal wins:** the best separation-to-noise ratio (median rep depth divided by resting noise) among signals whose count matches the agreed one. Head signals are weighted down because glancing at the phone moves them.
+  - **Result:** saved as a *setup*: the signal plus its top and bottom values. Each phone placement gets its own setup, so different people and different spots each get their own calibration.
+- **`RepCounter`.** Each frame's value is turned into progress, 0 at the top and 1 at the calibrated bottom. A rep counts when progress goes past the depth threshold (default 0.7, set in Settings) and back below 0.3, at least 0.6 s after the previous rep.
+  - **Shallow reps:** once a dip passes halfway and lasts 0.35 s, turning back up by 0.1 before reaching the depth line fires `shallow` ("Lower", said while you're still down). If you then go deeper, the rep counts. If you come back up instead, `nocount` fires at the top. Quick nods never trigger either.
   - **Arming.** A set starts after the user holds still near the top for about 1 s. For *shift* and *ratio* signals, the top value is reset at that point, so a phone placed slightly differently from last time still counts correctly.
   - **Dropouts.** If tracking drops out for 0.3 to 3 s mid-rep and the user comes back at the top, the rep is counted.
 
@@ -93,13 +98,22 @@ On Firebase Hosting the app reads its config from `/__/firebase/init.json` and s
 
 `public/firebase-config.js` is the fallback for other hosts.
 
+### Set videos
+
+Recording is off by default. In Settings → Save set videos, pick a limit of 250 MB, 500 MB or 1 GB.
+- **Recording:** each set is recorded with `MediaRecorder` from the moment tracking starts until Finish. Safari records MP4/H.264 and Chromium records MP4 or WebM, at about 1 Mbps (roughly 7 MB a minute).
+- **Saving:** a clip is kept only if you save the set; discarding the set drops it. Clips go in IndexedDB (`anyfield-video`, keyed by the set's timestamp) and are never uploaded.
+- **Limit:** when the total passes the limit, the oldest clips are deleted first. A recording stops on its own at 90% of the limit.
+- **Playback:** a play chip on the set row opens a player with Save to Photos (Web Share with a file) or Download, and Delete. Deleting a set also deletes its video.
+
 ### Storage
 
 Everything is stored under one `localStorage` key, `pushStudio.v1`:
 
 ```js
 { setups: [{ id, name, place, signal, up, down, noise, score, quality }],
-  active, goal, depth, sound, model,
+  active, goal, depth, sound, model, videoCap,          // videoCap in MB, 0 = off
+  videos: { "<set t>": { size, dur, reps, type, day } }, // index of clips in IndexedDB
   log: { "YYYY-MM-DD": { sets: [{ t, reps, setup, manual }] } } }
 ```
 

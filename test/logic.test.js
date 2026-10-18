@@ -1,101 +1,179 @@
-// Synthetic tests for the push-up calibration + counting logic extracted from index.html
+// Tests for the calibration and rep-counting logic in public/index.html (the block between
+// LOGIC-START and LOGIC-END). Signals are simulated for a side view and a floor-in-front view.
+// Run: node test/logic.test.js
 const fs = require('fs');
-const html = fs.readFileSync(process.argv[2] || require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
-const code = html.split('/* LOGIC-START */')[1].split('/* LOGIC-END */')[0];
-new Function(code)();
+const path = require('path');
+const html = fs.readFileSync(process.argv[2] || path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+new Function(html.split('/* LOGIC-START */')[1].split('/* LOGIC-END */')[0])();
 const { Calibrator, RepCounter, KEYS } = globalThis.PushLogic;
 
 let seed = 7;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const FPS = 30, DT = 1000 / FPS;
 
-// depth profile: 0 at top, 1 at bottom. holdS seconds still, then reps of repS seconds each (with optional partials)
-function profile(holdS, reps, repS, opts = {}) {
-  const fps = 30, out = [];
-  let t = 0;
-  for (let i = 0; i < holdS * fps; i++) out.push({ t: (t += 1000 / fps), d: 0 });
-  reps.forEach(depth => {
-    const n = repS * fps;
-    for (let i = 0; i < n; i++) out.push({ t: (t += 1000 / fps), d: depth * Math.sin(Math.PI * i / n) ** 2 });
-    for (let i = 0; i < 0.4 * fps; i++) out.push({ t: (t += 1000 / fps), d: 0 });
-  });
-  return out;
+// A timeline of frames. d = push-up depth (0 top, 1 bottom); nod = head-only movement; shuffle = whole-body shift.
+function timeline() {
+  const f = []; let t = 0;
+  const api = {
+    frames: f,
+    hold(sec) { for (let i = 0; i < sec * FPS; i++) f.push({ t: (t += DT), d: 0, nod: 0, shuffle: 0 }); return api; },
+    rep(depth = 1, sec = 2, opts = {}) {
+      const n = Math.round(sec * FPS);
+      for (let i = 0; i < n; i++) {
+        let d = depth * Math.sin(Math.PI * i / n) ** 2;
+        if (opts.pauseAt != null) { // go down to pauseAt, wait, then finish the rep
+          const half = n / 2;
+          if (i < half) d = Math.min(d, opts.pauseAt);
+        }
+        if (opts.bounce && Math.abs(i - n / 2) < n * 0.08) d = depth - opts.bounce * Math.cos(Math.PI * (i - n / 2) / (n * 0.08)) ** 2;
+        f.push({ t: (t += DT), d, nod: 0, shuffle: 0 });
+        if (opts.pauseAt != null && i === Math.floor(n / 2) - Math.floor(n * 0.15)) for (let k = 0; k < 0.6 * FPS; k++) f.push({ t: (t += DT), d: opts.pauseAt, nod: 0, shuffle: 0 });
+      }
+      return api.hold(0.4);
+    },
+    // goes to `turnAt`, comes back up by `back`, then either finishes the rep (deeper) or returns to the top
+    dipAndFix(turnAt, back, finishDepth) {
+      const seg = (a, b, sec) => { const n = Math.round(sec * FPS); for (let i = 1; i <= n; i++) f.push({ t: (t += DT), d: a + (b - a) * i / n, nod: 0, shuffle: 0 }); };
+      seg(0, turnAt, 0.8); seg(turnAt, turnAt - back, 0.35); seg(turnAt - back, finishDepth, 0.6); seg(finishDepth, 0, 0.9);
+      return api.hold(0.4);
+    },
+    nod(amount = 1, sec = 0.35) { const n = Math.round(sec * FPS); for (let i = 0; i < n; i++) f.push({ t: (t += DT), d: 0, nod: amount * Math.sin(Math.PI * i / n), shuffle: 0 }); return api; },
+    shuffle(amount = 1, sec = 0.45) { const n = Math.round(sec * FPS); for (let i = 0; i < n; i++) f.push({ t: (t += DT), d: 0, nod: 0, shuffle: amount * Math.sin(Math.PI * i / n) }); return api; },
+    now() { return t; },
+  };
+  return api;
 }
-// view models: map depth -> signal values with noise
+
+// Signals as the two placements would see them, with tracking noise.
 const views = {
-  side: d => ({ elbow: 172 - 92 * d + gauss() * 2, chest: 0.11 - 0.08 * d + gauss() * 0.003, head: 0.16 - 0.1 * d + gauss() * 0.004,
-                shoulderY: 0.45 + 0.07 * d + gauss() * 0.003, headY: 0.42 + 0.09 * d + gauss() * 0.004, scale: 0.02 + gauss() * 0.004 }),
-  front: d => ({ elbow: 160 - 15 * d + gauss() * 9, chest: 0.2 - 0.02 * d + gauss() * 0.006, head: null,
-                 shoulderY: 0.40 + 0.11 * d + gauss() * 0.003, headY: 0.30 + 0.14 * d + gauss() * 0.004, scale: 0.26 + 0.05 * d + gauss() * 0.0025 }),
-  still: d => ({ elbow: 170 + gauss() * 2, chest: 0.1 + gauss() * 0.003, head: null, shoulderY: 0.45 + gauss() * 0.003, headY: 0.4 + gauss() * 0.003, scale: 0.25 + gauss() * 0.002 })
+  side: (d, nod, sh) => ({ elbow: 172 - 92 * d + gauss() * 2, chest: 0.11 - 0.08 * d + gauss() * 0.003, head: 0.16 - 0.1 * d - 0.04 * nod + gauss() * 0.004,
+                           shoulderY: 0.45 + 0.07 * d + 0.02 * sh + gauss() * 0.003, headY: 0.42 + 0.09 * d + 0.06 * nod + 0.02 * sh + gauss() * 0.004, scale: 0.02 + gauss() * 0.004 }),
+  front: (d, nod, sh) => ({ elbow: 160 - 15 * d + gauss() * 9, chest: 0.2 - 0.02 * d + gauss() * 0.006, head: null,
+                            shoulderY: 0.40 + 0.11 * d + 0.03 * sh + gauss() * 0.003, headY: 0.30 + 0.14 * d + 0.07 * nod + 0.03 * sh + gauss() * 0.004, scale: 0.26 + 0.05 * d + gauss() * 0.0025 }),
+  still: () => ({ elbow: 170 + gauss() * 2, chest: 0.1 + gauss() * 0.003, head: null, shoulderY: 0.45 + gauss() * 0.003, headY: 0.4 + gauss() * 0.003, scale: 0.25 + gauss() * 0.002 }),
 };
 
-function calibrate(view, prof) {
+function calibrate(view, tl) {
   const c = new Calibrator(); const evs = [];
-  for (const f of prof) { c.push(f.t, views[view](f.d)).forEach(e => evs.push(e)); if (c.phase === 'done' || c.phase === 'failed') break; }
-  // keep feeding still frames until timeout if not finished
-  let t = prof[prof.length - 1].t;
-  while (c.phase !== 'done' && c.phase !== 'failed') { t += 33; c.push(t, views[view](0)).forEach(e => evs.push(e)); }
+  for (const f of tl.frames) { c.push(f.t, views[view](f.d, f.nod, f.shuffle)).forEach(e => evs.push({ ...e, t: f.t })); if (c.phase === 'done' || c.phase === 'failed') break; }
+  let t = tl.now();
+  while (c.phase !== 'done' && c.phase !== 'failed') { t += DT; c.push(t, views[view](0, 0, 0)).forEach(e => evs.push({ ...e, t })); }
   return evs;
+}
+function count(cal, view, tl, opts = {}) {
+  const rc = new RepCounter(cal, { depth: 0.7 }); const evs = [];
+  tl.frames.forEach((f, i) => {
+    const vals = views[view](f.d, f.nod, f.shuffle);
+    if (opts.shift) for (const k of ['chest', 'head', 'shoulderY', 'headY']) if (vals[k] != null) vals[k] += opts.shift;
+    let v = vals[cal.signal];
+    if (opts.dropout && i >= opts.dropout[0] && i < opts.dropout[1]) v = null;
+    rc.push(f.t, v).forEach(e => evs.push({ e, t: f.t }));
+  });
+  const n = name => evs.filter(x => x.e === name).length;
+  return { rc, evs, n };
 }
 
 let fail = 0;
 const check = (name, cond, extra) => { console.log((cond ? 'PASS ' : 'FAIL ') + name + (extra ? '  ' + extra : '')); if (!cond) fail++; };
 
-// 1. side view calibration -> elbow
-let ev = calibrate('side', profile(2.5, [1, 1, 1], 2.4));
-let done = ev.find(e => e.type === 'done');
-check('side view calibrates', !!done, done && JSON.stringify({ s: done.result.signal, q: done.result.quality, score: done.result.score, up: done.result.up.toFixed(1), down: done.result.down.toFixed(1) }));
-check('side view picks elbow', done && done.result.signal === 'elbow');
-check('side view announces 3 reps', ev.filter(e => e.type === 'rep').length === 3);
+// ---------- calibration ----------
+let tl = timeline().hold(2.5).rep().rep().rep();
+let ev = calibrate('side', tl), done = ev.find(e => e.type === 'done');
+check('side view calibrates', !!done, done && JSON.stringify({ s: done.result.signal, q: done.result.quality, score: done.result.score }));
+check('side view picks elbow angle', done && done.result.signal === 'elbow');
+check('side view announces exactly 3 reps', ev.filter(e => e.type === 'rep').length === 3);
 const sideCal = done.result;
 
-// 2. front view calibration -> not elbow (noisy), y or scale based
-ev = calibrate('front', profile(2.5, [1, 1, 1], 2.4));
-done = ev.find(e => e.type === 'done');
-check('front view calibrates', !!done, done && JSON.stringify({ s: done.result.signal, q: done.result.quality, score: done.result.score, alt: done.result.alternatives }));
-check('front view avoids noisy elbow', done && done.result.signal !== 'elbow');
+tl = timeline().hold(2.5).rep().rep().rep();
+ev = calibrate('front', tl); done = ev.find(e => e.type === 'done');
+check('front view calibrates', !!done, done && JSON.stringify({ s: done.result.signal, q: done.result.quality, alt: done.result.alternatives }));
+check('front view tracks shoulders, not the head', done && done.result.signal === 'shoulderY');
 const frontCal = done.result;
 
-// 3. no movement -> fails with motion reason
-ev = calibrate('still', profile(2.5, [], 1));
-check('no movement fails', ev.some(e => e.type === 'fail' && e.reason === 'motion'), JSON.stringify(ev.filter(e => e.type !== 'rep')));
+// Glances at the screen and shuffling into position must not count as reps.
+tl = timeline().hold(2.5).nod(1).hold(0.5).shuffle(1).hold(0.4).nod(1).hold(0.6);
+const before3rd = () => tl.now();
+tl.rep(1, 2.2); tl.nod(1).hold(0.3); tl.rep(1, 2.2); const third = before3rd(); tl.rep(1, 2.2);
+ev = calibrate('front', tl); done = ev.find(e => e.type === 'done');
+check('nods and shuffles: waits for the 3rd real push-up', done && done.t > third + 1000, done ? `done at ${Math.round(done.t)} ms, 3rd rep starts ${Math.round(third)} ms` : 'no done');
+check('nods and shuffles: still picks shoulders', done && done.result.signal === 'shoulderY', done && done.result.signal);
+check('nods and shuffles: announces 3 reps, not more', ev.filter(e => e.type === 'rep').length === 3, String(ev.filter(e => e.type === 'rep').length));
 
-// 4. never visible -> hold failure
+// Same in side view, where the head is visible too.
+tl = timeline().hold(2.5).nod(1).shuffle(1).hold(0.5).nod(1);
+tl.rep(1, 2); tl.rep(1, 2); const third2 = tl.now(); tl.rep(1, 2);
+ev = calibrate('side', tl); done = ev.find(e => e.type === 'done');
+check('side view with nods: waits for the 3rd push-up', done && done.t > third2 + 900, done ? `done at ${Math.round(done.t)}, 3rd starts ${Math.round(third2)}` : 'no done');
+
+// A signal that dips twice per push-up and looks cleaner than the shoulders (elbow seen from the front
+// with a shaky shoulder track) must neither finish calibration early nor become the tracked signal.
+views.frontDouble = (d, nod, sh) => ({ ...views.front(d, nod, sh), elbow: 160 - 50 * Math.sin(Math.PI * d) + gauss() * 3,
+  shoulderY: 0.40 + 0.11 * d + gauss() * 0.008, headY: 0.30 + 0.14 * d + gauss() * 0.01 });
+tl = timeline().hold(2.5).rep(1, 2.2).rep(1, 2.2); const third3 = tl.now(); tl.rep(1, 2.2);
+ev = calibrate('frontDouble', tl); done = ev.find(e => e.type === 'done');
+check('double-dipping signal: waits for the 3rd push-up', done && done.t > third3 + 1000, done ? `done at ${Math.round(done.t)}, 3rd starts ${Math.round(third3)}` : 'no done');
+check('double-dipping signal: not chosen for counting', done && done.result.signal !== 'elbow', done && done.result.signal);
+check('double-dipping signal: announces 3 reps', ev.filter(e => e.type === 'rep').length === 3, String(ev.filter(e => e.type === 'rep').length));
+
+tl = timeline().hold(2.5).hold(6);
+ev = calibrate('still', tl);
+check('no movement fails with a clear reason', ev.some(e => e.type === 'fail' && e.reason === 'motion'));
 { const c = new Calibrator(); let out = []; for (let t = 0; t < 27000; t += 33) out = out.concat(c.push(t, Object.fromEntries(KEYS.map(k => [k, null]))));
-  check('never visible fails on hold', out.some(e => e.type === 'fail' && e.reason === 'hold')); }
+  check('never visible fails on the hold step', out.some(e => e.type === 'fail' && e.reason === 'hold')); }
 
-// 5. counting: 12 full reps + 2 partial reps + a dropout, side cal
-function runCount(cal, view, reps, opts = {}) {
-  const rc = new RepCounter(cal, { depth: 0.7 });
-  const prof = profile(1.5, reps, opts.repS || 1.6);
-  const evs = [];
-  prof.forEach((f, i) => {
-    let vals = views[view](f.d);
-    if (opts.shift) for (const k of ['chest', 'head', 'shoulderY', 'headY']) if (vals[k] != null) vals[k] += opts.shift;
-    let v = vals[cal.signal];
-    if (opts.dropout && i > 120 && i < 160) v = null;
-    rc.push(f.t, v).forEach(e => evs.push(e));
-  });
-  return { rc, evs };
+// ---------- counting ----------
+tl = timeline().hold(1.5); [1, 1, 1, 0.55, 1, 1, 1, 1, 0.5, 1, 1, 1, 0.95, 1].forEach(dp => tl.rep(dp, 1.6));
+let r = count(sideCal, 'side', tl, { dropout: [120, 160] });
+check('side: counts 12 full reps out of 14', r.rc.reps === 12, 'got ' + r.rc.reps);
+check('side: "lower" cue once per shallow rep', r.n('shallow') === 2, 'got ' + r.n('shallow'));
+check('side: "not counted" once per shallow rep', r.n('nocount') === 2, 'got ' + r.n('nocount'));
+check('side: tracking dropout reported and recovered', r.n('lost') === 1 && r.n('found') === 1);
+
+for (const [name, cal, view] of [['side', sideCal, 'side'], ['front', frontCal, 'front']]) {
+  tl = timeline().hold(1.5); for (let i = 0; i < 15; i++) tl.rep(0.8 + 0.2 * rnd(), 1.2 + 0.8 * rnd());
+  r = count(cal, view, tl);
+  check(`${name}: 15 full reps of varying depth all count`, r.rc.reps === 15, 'got ' + r.rc.reps);
+  check(`${name}: no "lower" cue on full reps`, r.n('shallow') === 0 && r.n('nocount') === 0, `shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
 }
-const seq = [1, 1, 1, 0.5, 1, 1, 1, 1, 0.45, 1, 1, 1, 0.95, 1];
-let r = runCount(sideCal, 'side', seq, { dropout: true });
-check('side counts 12 full reps', r.rc.reps === 12, 'got ' + r.rc.reps);
-check('side flags 2 partial reps', r.evs.filter(e => e === 'partial').length === 2, 'got ' + r.evs.filter(e => e === 'partial').length);
-check('side arms once', r.evs.filter(e => e === 'armed').length === 1);
-check('dropout reported lost/found', r.evs.includes('lost') && r.evs.includes('found'));
 
-// 6. front cal, phone nudged a bit (shift) next day -> rebaseline keeps counting right
-r = runCount(frontCal, 'front', [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], { shift: 0.025 });
-check('front counts 10 with phone shifted', r.rc.reps === 10, 'got ' + r.rc.reps + ' signal ' + frontCal.signal);
+// Shallow rep: the cue comes while you're still down, then "not counted" at the top.
+tl = timeline().hold(1.5).rep(0.55, 1.8);
+r = count(sideCal, 'side', tl);
+const cueT = (r.evs.find(x => x.e === 'shallow') || {}).t, ncT = (r.evs.find(x => x.e === 'nocount') || {}).t;
+check('shallow rep: not counted, one cue, cue before reaching the top', r.rc.reps === 0 && r.n('shallow') === 1 && r.n('nocount') === 1 && cueT < ncT - 300, `cue ${Math.round(cueT)} ms, not-counted ${Math.round(ncT)} ms`);
 
-// 7. fast reps (0.9 s each)
-r = runCount(sideCal, 'side', Array(20).fill(1), { repS: 0.9 });
-check('fast reps all counted', r.rc.reps === 20, 'got ' + r.rc.reps);
+// Hear "lower", go lower: the rep counts and there's no "not counted".
+tl = timeline().hold(1.5).dipAndFix(0.6, 0.15, 1);
+r = count(sideCal, 'side', tl);
+check('cue then deeper: counts the rep', r.rc.reps === 1 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
 
-// 8. holding still at top produces no reps
-{ const rc = new RepCounter(sideCal, { depth: 0.7 }); for (let t = 0; t < 20000; t += 33) rc.push(t, views.side(0).elbow);
-  check('noise at the top never counts', rc.reps === 0); }
+// Pausing halfway down is not a shallow rep.
+tl = timeline().hold(1.5).rep(1, 2, { pauseAt: 0.55 }).rep(1, 2, { pauseAt: 0.6 });
+r = count(sideCal, 'side', tl);
+check('pause halfway then finish: counts, no cue', r.rc.reps === 2 && r.n('shallow') === 0 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
+
+// Bouncing at the bottom is one rep.
+tl = timeline().hold(1.5); for (let i = 0; i < 5; i++) tl.rep(1, 1.6, { bounce: 0.3 });
+r = count(sideCal, 'side', tl);
+check('bounce at the bottom: no double counts', r.rc.reps === 5, 'got ' + r.rc.reps);
+
+// Glancing at the screen between reps, even if the head signal were tracked.
+const headCal = { signal: 'headY', up: 0.30, down: 0.44, noise: 0.004 };
+tl = timeline().hold(1.5).rep(1, 1.6).nod(1).hold(0.3).nod(1).rep(1, 1.6).nod(1).hold(0.4).rep(1, 1.6);
+r = count(headCal, 'front', tl);
+check('head tracking: nods are neither reps nor "lower" cues', r.rc.reps === 3 && r.n('shallow') === 0 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
+
+tl = timeline().hold(1.5); for (let i = 0; i < 10; i++) tl.rep(1, 1.6);
+r = count(frontCal, 'front', tl, { shift: 0.025 });
+check('front: phone moved a little since calibration, still counts 10', r.rc.reps === 10, 'got ' + r.rc.reps);
+
+tl = timeline().hold(1.5); for (let i = 0; i < 20; i++) tl.rep(1, 0.9);
+r = count(sideCal, 'side', tl);
+check('fast reps (0.9 s) all counted', r.rc.reps === 20, 'got ' + r.rc.reps);
+
+{ const rc = new RepCounter(sideCal, { depth: 0.7 }); let cues = 0;
+  for (let t = 0; t < 20000; t += 33) cues += rc.push(t, views.side(0, 0, 0).elbow).filter(e => e !== 'armed').length;
+  check('holding still at the top: no reps, no cues', rc.reps === 0 && cues === 0); }
 
 process.exit(fail ? 1 : 0);

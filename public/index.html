@@ -202,6 +202,17 @@ h1,h2,h3,p{margin:0}
 .set-del.confirm{background:rgba(239,123,107,.16);color:var(--bad);padding:0 12px;margin-right:-12px}
 .set-row:has(.set-del.confirm){grid-template-columns:4.8em minmax(0,1fr) auto auto}
 .empty{color:var(--ink-3);font-size:15px;max-width:36ch}
+.set-src{display:flex;align-items:baseline;gap:8px;min-width:0}
+.set-src > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.play{flex:none;display:inline-flex;align-items:center;gap:5px;height:28px;margin:-8px 0;padding:0 10px 0 8px;border-radius:14px;
+  background:rgba(180,219,98,.14);color:var(--accent-hi);font-size:13px;font-weight:650;font-variant-numeric:tabular-nums;align-self:center}
+.play svg{width:11px;height:11px}
+.pill.rec{padding:0 12px;gap:7px;font-size:13px;letter-spacing:.04em}
+.pill.rec .dot{background:var(--bad);color:var(--bad);animation:blink 1.2s steps(2,start) infinite}
+@keyframes blink{to{visibility:hidden}}
+.player{display:block;width:100%;max-height:min(62vh,560px);border-radius:20px;background:#000;object-fit:contain}
+.usage{height:6px;border-radius:3px;background:rgba(238,242,228,.08);overflow:hidden}
+.usage i{display:block;height:100%;width:0;background:var(--accent);border-radius:inherit}
 
 .dock{position:fixed;z-index:20;left:0;right:0;bottom:0;
   padding:0 max(20px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 14px) max(20px,env(safe-area-inset-left,0px));
@@ -401,6 +412,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 }
 @media (prefers-reduced-motion: reduce){
   .beam{animation:none}
+  .pill.rec .dot{animation:none}
   .press,.sheet,.toast,.strip-fill,.who i{transition:none}
   .rep{transform:none;font-stretch:100%}
   .rep.pop,.flash.go,.flash.goal{animation-duration:.01s}
@@ -546,6 +558,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
         <button class="glass clear round press" id="sessionClose" type="button" aria-label="End set">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
+        <div class="glass clear pill rec" id="recPill" hidden><span class="dot"></span>REC</div>
         <div class="glass clear pill time" id="sessionTime">0:00</div>
       </div>
       <div class="glass clear pill status" id="sessionStatus" data-kind="wait" role="status"><span class="dot"></span><span class="txt" id="sessionStatusText">Starting camera</span></div>
@@ -583,6 +596,15 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       <label><input type="radio" name="model" value="lite"><span>Fast</span></label>
       <label><input type="radio" name="model" value="full"><span>Precise</span></label></div>
     <p class="hint">Precise copes better with odd angles and low light, and uses more battery.</p></div>
+  <div class="row col"><span class="lbl" id="vidLbl">Save set videos</span>
+    <div class="seg" role="radiogroup" aria-labelledby="vidLbl">
+      <label><input type="radio" name="vcap" value="0"><span>Off</span></label>
+      <label><input type="radio" name="vcap" value="250"><span>250 MB</span></label>
+      <label><input type="radio" name="vcap" value="500"><span>500 MB</span></label>
+      <label><input type="radio" name="vcap" value="1000"><span>1 GB</span></label></div>
+    <div class="usage" id="vidUsage" hidden><i></i></div>
+    <p class="hint" id="vidHint"></p>
+    <button class="link danger" id="vidClear" type="button" style="align-self:flex-start" hidden>Delete all videos</button></div>
   <div class="row"><span class="lbl">Your log</span><button class="btn plain press" id="exportBtn" type="button" style="width:auto;height:42px">Export CSV</button></div>
   <p class="hint" id="storeHint">Your log and setups are stored on this device only.</p>
 </div>
@@ -635,6 +657,14 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="btn-row" id="joinBtns"></div>
 </div>
 
+<div class="sheet glass" id="videoSheet" role="dialog" aria-modal="true" aria-labelledby="videoTitle" hidden>
+  <div class="grip"></div>
+  <div class="sheet-head"><h2 id="videoTitle">Set video</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <video class="player" id="player" controls playsinline preload="metadata"></video>
+  <div class="btn-row"><button class="glass prime btn press" id="videoShare" type="button">Save to Photos</button>
+    <button class="link danger" id="videoDelete" type="button" style="align-self:center">Delete video</button></div>
+</div>
+
 <div class="toast glass" id="toast" role="status" hidden></div>
 
 <script src="firebase-config.js"></script>
@@ -684,22 +714,40 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     return o;
   }
 
-  function newTracker(up, noise) { return { up: up, noise: noise, pos: 0, neg: 0, dir: 0, st: 'up', reps: 0, peaks: [], cur: 0 }; }
-  function stepTracker(tr, x, minSep) {
+  // A calibration rep must look like a push-up, not a nod or a shuffle into position:
+  // it lasts at least MIN_REP_MS, reps are at least GAP_MS apart, and its depth is at least
+  // KEEP of the deepest rep seen on that signal (smaller wiggles are dropped after the fact).
+  var MIN_REP_MS = 600, GAP_MS = 900, KEEP = 0.6;
+  function newTracker(up, noise) { return { up: up, noise: noise, pos: 0, neg: 0, dir: 0, st: 'up', cur: 0, list: [], startT: 0, lastT: -1e9 }; }
+  function stepTracker(tr, x, minSep, t) {
     var d = x - tr.up;
     if (d > tr.pos) tr.pos = d; if (d < tr.neg) tr.neg = d;
-    if (!tr.dir) { if (Math.max(tr.pos, -tr.neg) >= minSep) tr.dir = tr.pos >= -tr.neg ? 1 : -1; else return; }
+    if (!tr.dir) { if (Math.max(tr.pos, -tr.neg) >= minSep) { tr.dir = tr.pos >= -tr.neg ? 1 : -1; tr.startT = t; } else return; }
     var ext = tr.dir > 0 ? tr.pos : tr.neg, p = d / ext;
-    if (tr.st === 'up') { if (p > 0.7) { tr.st = 'down'; tr.cur = d; } }
-    else { if (tr.dir > 0 ? d > tr.cur : d < tr.cur) tr.cur = d;
-      if (p < 0.3) { tr.st = 'up'; tr.reps++; tr.peaks.push(tr.cur); } }
+    if (tr.st === 'up') {
+      if (p > 0.3) { if (!tr.startT) tr.startT = t; } else if (p < 0.15) tr.startT = 0;
+      if (p > 0.7) { tr.st = 'down'; tr.cur = d; if (!tr.startT) tr.startT = t; }
+    } else {
+      if (tr.dir > 0 ? d > tr.cur : d < tr.cur) tr.cur = d;
+      if (p < 0.3) {
+        tr.st = 'up';
+        if (t - tr.startT >= MIN_REP_MS && t - tr.lastT >= GAP_MS) { tr.list.push({ peak: tr.cur, t: t }); tr.lastT = t; }
+        tr.startT = 0;
+      }
+    }
   }
+  function validReps(tr) {
+    var m = 0; tr.list.forEach(function (r) { m = Math.max(m, Math.abs(r.peak)); });
+    return tr.list.filter(function (r) { return Math.abs(r.peak) >= KEEP * m; });
+  }
+  // Head signals move when you glance at the screen, so they only win when nothing steadier is available.
+  var WEIGHT = { elbow: 1.25, head: 0.6, headY: 0.6 };
   function trackerScore(k, tr) {
-    if (!tr || !tr.peaks.length) return 0;
-    var sig = SIGNALS[k], sep = Math.abs(median(tr.peaks));
+    var reps = tr ? validReps(tr) : [];
+    if (!reps.length) return 0;
+    var sig = SIGNALS[k], sep = Math.abs(median(reps.map(function (r) { return r.peak; })));
     if (sep < sig.minSep) return 0;
-    var s = sep / Math.max(tr.noise, sig.floor);
-    return k === 'elbow' ? s * 1.25 : s;
+    return sep / Math.max(tr.noise, sig.floor) * (WEIGHT[k] || 1);
   }
 
   // Calibration: hold the top position, then a few slow reps. Every candidate signal is tracked in
@@ -707,7 +755,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   function Calibrator(opts) {
     opts = opts || {};
     this.holdMs = opts.holdMs || 1500; this.targetReps = opts.targetReps || 3;
-    this.holdTimeout = opts.holdTimeout || 25000; this.repTimeout = opts.repTimeout || 35000;
+    this.holdTimeout = opts.holdTimeout || 25000; this.repTimeout = opts.repTimeout || 40000;
+    this.minRepsMs = opts.minRepsMs != null ? opts.minRepsMs : 3000;
     this.phase = 'hold'; this.buf = []; this.ema = {}; this.trk = {}; this.t0 = null; this.repStart = 0; this.lastLead = 0;
   }
   Calibrator.prototype.push = function (t, vals) {
@@ -737,15 +786,26 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       return ev;
     }
 
-    for (k in this.trk) if (v[k] != null) stepTracker(this.trk[k], v[k], SIGNALS[k].minSep);
-    var lead = this.leader(), leadReps = lead ? this.trk[lead].reps : 0;
-    if (leadReps > this.lastLead) { this.lastLead = leadReps; ev.push({ type: 'rep', n: leadReps }); }
-    if (leadReps >= this.targetReps || t - this.repStart > this.repTimeout) {
+    for (k in this.trk) if (v[k] != null) stepTracker(this.trk[k], v[k], SIGNALS[k].minSep, t);
+    var n = this.agreed();
+    if (n > this.lastLead) { this.lastLead = n; ev.push({ type: 'rep', n: Math.min(n, this.targetReps) }); }
+    if ((n >= this.targetReps && t - this.repStart >= this.minRepsMs) || t - this.repStart > this.repTimeout) {
       var r = this.result();
       if (r) { this.phase = 'done'; ev.push({ type: 'done', result: r }); }
       else { this.phase = 'failed'; ev.push({ type: 'fail', reason: 'motion' }); }
     }
     return ev;
+  };
+  // Reps that at least two signals agree on. One signal that dips twice per push-up (elbow angle seen
+  // from the front does this) can't finish calibration early or become the tracked signal.
+  Calibrator.prototype.counts = function () {
+    var out = {};
+    for (var k in this.trk) if (trackerScore(k, this.trk[k]) >= 4) out[k] = validReps(this.trk[k]).length;
+    return out;
+  };
+  Calibrator.prototype.agreed = function () {
+    var c = this.counts(), n = Object.keys(c).map(function (k) { return c[k]; }).sort(function (a, b) { return b - a; });
+    return n.length >= 2 ? n[1] : (n[0] || 0);
   };
   Calibrator.prototype.leader = function () {
     var best = null, bs = 0;
@@ -753,14 +813,18 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     return best;
   };
   Calibrator.prototype.result = function () {
-    var self = this;
-    var c = Object.keys(this.trk).filter(function (k) { return self.trk[k].reps >= 2; })
-      .map(function (k) { return { k: k, s: trackerScore(k, self.trk[k]) }; })
+    var self = this, agreed = this.agreed();
+    var all = Object.keys(this.trk).filter(function (k) { return validReps(self.trk[k]).length >= 2; })
+      .map(function (k) { return { k: k, s: trackerScore(k, self.trk[k]), n: validReps(self.trk[k]).length }; })
       .filter(function (x) { return x.s > 0; })
       .sort(function (a, b) { return b.s - a.s; });
+    // Prefer a signal whose count matches what the others saw.
+    var c = all.filter(function (x) { return x.n === agreed; });
+    if (!c.length) c = all.filter(function (x) { return Math.abs(x.n - agreed) <= 1; });
+    if (!c.length) c = all;
     if (!c.length) return null;
-    var k = c[0].k, tr = this.trk[k], sep = median(tr.peaks), score = c[0].s;
-    return { signal: k, up: tr.up, down: tr.up + sep, noise: tr.noise, score: +score.toFixed(1), reps: tr.reps,
+    var k = c[0].k, tr = this.trk[k], reps = validReps(tr), sep = median(reps.map(function (r) { return r.peak; })), score = c[0].s;
+    return { signal: k, up: tr.up, down: tr.up + sep, noise: tr.noise, score: +score.toFixed(1), reps: reps.length,
       quality: score >= 15 ? 'strong' : score >= 7 ? 'good' : 'weak',
       alternatives: c.slice(1, 3).map(function (x) { return { signal: x.k, score: +x.s.toFixed(1) }; }) };
   };
@@ -772,8 +836,11 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     this.depth = opts.depth != null ? opts.depth : 0.7; this.upTh = Math.min(0.3, this.depth - 0.2);
     this.tol = Math.max(this.sig.stab, 3 * (cal.noise || 0));
     this.state = 'arming'; this.reps = 0; this.ema = null; this.buf = []; this.t0 = null;
-    this.lastSeen = null; this.lost = false; this.exc = 0; this.downAt = 0; this.p = null;
+    this.lastSeen = null; this.lost = false; this.exc = 0; this.excT = 0; this.cued = false; this.downAt = 0; this.lastRepT = -1e9; this.p = null;
   }
+  // Cue thresholds (progress units): a dip counts as an attempt once it passes HALF, and the
+  // "lower" cue fires when you turn back up by TURN without reaching the depth line.
+  var HALF = 0.45, TURN = 0.1;
   RepCounter.prototype.progress = function (v) { return (v - this.up) / (this.down - this.up); };
   RepCounter.prototype.rebaseline = function (m) {
     var k = this.sig.kind;
@@ -797,8 +864,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     if (gap > 250 && this.state === 'up') {
       // Tracking dropped mid-descent (often the face nearing a floor-level phone). If the gap fits a rep
       // and you come back at the top, count it; otherwise forget the half-seen movement.
-      if (this.exc >= 0.5 && gap >= 300 && gap <= 3000 && p < this.upTh) { this.reps++; ev.push('rep'); }
-      this.exc = 0;
+      if (this.exc >= 0.5 && gap >= 300 && gap <= 3000 && p < this.upTh) { this.reps++; this.lastRepT = t; ev.push('rep'); }
+      this.exc = 0; this.excT = 0; this.cued = false;
     }
 
     if (this.state === 'arming') {
@@ -808,17 +875,23 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
         var xs = this.buf.map(function (b) { return b.v; }), m = mean(xs), s = std(xs), pm = this.progress(m);
         if (s < this.tol && Math.abs(pm) <= 0.6) {
           if (Math.abs(pm) <= 0.35) this.rebaseline(m);
-          this.state = 'up'; this.exc = 0; this.buf = []; this.p = this.progress(v); ev.push('armed');
+          this.state = 'up'; this.exc = 0; this.excT = 0; this.cued = false; this.buf = []; this.p = this.progress(v); ev.push('armed');
         }
       }
       return ev;
     }
     if (this.state === 'up') {
+      if (p > this.upTh && !this.excT) this.excT = t;
       if (p >= this.depth) { this.state = 'down'; this.downAt = t; }
-      else { if (p > this.exc) this.exc = p;
-        if (p < 0.15) { if (this.exc > 0.35) ev.push('partial'); this.exc = 0; } }
-    } else if (p < this.upTh && t - this.downAt >= 250) {
-      this.state = 'up'; this.reps++; this.exc = 0; ev.push('rep');
+      else {
+        if (p > this.exc) this.exc = p;
+        var attempt = this.exc >= HALF && this.excT && t - this.excT >= 350;
+        // Said while you're still down, so you can still go lower and have the rep count.
+        if (attempt && !this.cued && p <= this.exc - TURN) { this.cued = true; ev.push('shallow'); }
+        if (p < 0.15) { if (attempt) ev.push('nocount'); this.exc = 0; this.excT = 0; this.cued = false; }
+      }
+    } else if (p < this.upTh && t - this.downAt >= 200 && t - this.lastRepT >= 600 && (!this.excT || t - this.excT >= 450)) {
+      this.state = 'up'; this.reps++; this.lastRepT = t; this.exc = 0; this.excT = 0; this.cued = false; ev.push('rep');
     }
     return ev;
   };
@@ -851,7 +924,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 
   /* ---------- storage ---------- */
   var KEY = 'pushStudio.v1';
-  var DEFAULTS = { setups: [], active: null, goal: 50, depth: 0.7, sound: 'voice', model: 'lite', log: {}, goalCheered: null };
+  var DEFAULTS = { setups: [], active: null, goal: 50, depth: 0.7, sound: 'voice', model: 'lite', log: {}, goalCheered: null, videoCap: 0, videos: {} };
   var S = load();
   function load() {
     var base = JSON.parse(JSON.stringify(DEFAULTS));
@@ -881,12 +954,98 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     if (Cloud.on) cloudAddSet(rec);
     else { (S.log[rec.day] = S.log[rec.day] || { sets: [] }).sets.push({ t: rec.t, reps: reps, setup: rec.setup, manual: rec.manual }); save(); }
     renderHome();
+    return rec.t;
   }
   function removeSet(s) {
+    if (S.videos[s.t]) Vid.remove(s.t);
     if (Cloud.on) cloudRemoveSet(s);
     else { var arr = (S.log[dkey()] || { sets: [] }).sets, ix = arr.indexOf(s); if (ix >= 0) arr.splice(ix, 1); save(); }
     renderHome();
   }
+  /* ---------- set videos: recorded on this device only, capped, oldest deleted first ---------- */
+  var Vid = (function () {
+    var DB = 'anyfield-video', ST = 'clips', dbp = null, rec = null, chunks = [], bytes = 0, started = 0, recType = '';
+    function db() {
+      if (!dbp) dbp = new Promise(function (res, rej) {
+        var r = indexedDB.open(DB, 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore(ST, { keyPath: 't' }); };
+        r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+      });
+      return dbp;
+    }
+    function op(mode, fn) {
+      return db().then(function (d) { return new Promise(function (res, rej) {
+        var x = d.transaction(ST, mode), q = fn(x.objectStore(ST));
+        x.oncomplete = function () { res(q && q.result); }; x.onerror = x.onabort = function () { rej(x.error); };
+      }); });
+    }
+    function capBytes() { return (S.videoCap || 0) * 1e6; }
+    function used() { var n = 0; for (var k in S.videos) n += S.videos[k].size || 0; return n; }
+    function pickType() {
+      var c = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      for (var i = 0; i < c.length; i++) try { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; } catch (e) {}
+      return '';
+    }
+    function supported() { return !!(window.MediaRecorder && window.indexedDB); }
+    async function start(stream) {
+      if (!S.videoCap || !supported() || !stream || rec) return false;
+      try { var est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+        if (est && est.quota && est.quota - est.usage < 60e6) { toast('Not enough free space on this phone to record'); return false; } } catch (e) {}
+      recType = pickType();
+      try { rec = new MediaRecorder(stream, recType ? { mimeType: recType, videoBitsPerSecond: 1000000 } : { videoBitsPerSecond: 1000000 }); }
+      catch (e) { warn(e); rec = null; return false; }
+      chunks = []; bytes = 0; started = Date.now();
+      rec.ondataavailable = function (e) {
+        if (!e.data || !e.data.size) return;
+        chunks.push(e.data); bytes += e.data.size;
+        if (bytes > capBytes() * 0.9 && rec && rec.state === 'recording') { rec.stop(); toast('Video stopped: it reached your storage limit'); }
+      };
+      try { rec.start(1000); } catch (e) { warn(e); rec = null; return false; }
+      $('#recPill').hidden = false;
+      return true;
+    }
+    // Resolves to { blob, dur } or null. Call before the camera tracks stop.
+    function stop() {
+      $('#recPill').hidden = true;
+      var r = rec; rec = null;
+      if (!r) return Promise.resolve(null);
+      return new Promise(function (res) {
+        var done = function () {
+          if (!chunks.length) { res(null); return; }
+          var type = ((r.mimeType || recType || 'video/mp4').split(';')[0]) || 'video/mp4';
+          res({ blob: new Blob(chunks, { type: type }), dur: Math.round((Date.now() - started) / 1000) }); chunks = [];
+        };
+        if (r.state === 'inactive') { setTimeout(done, 0); return; }
+        r.onstop = function () { setTimeout(done, 0); };
+        try { r.stop(); } catch (e) { done(); }
+      });
+    }
+    async function keep(t, clip, reps) {
+      if (!clip || !clip.blob.size) return;
+      var meta = { size: clip.blob.size, dur: clip.dur, reps: reps, type: clip.blob.type, day: dkey(new Date(t)) };
+      try { await op('readwrite', function (st) { return st.put({ t: t, blob: clip.blob, type: clip.blob.type }); }); }
+      catch (e) { warn(e); toast(e && e.name === 'QuotaExceededError' ? 'The video didn’t fit on this phone' : 'The video couldn’t be saved'); return; }
+      S.videos[t] = meta; await trim(); save(); renderHome();
+    }
+    async function trim() {
+      var cap = capBytes() || Infinity, keys = Object.keys(S.videos).map(Number).sort(function (a, b) { return a - b; }), n = 0;
+      while (used() > cap && keys.length > 1) { var k = keys.shift(); await remove(k, true); n++; }
+      if (n) toast(n === 1 ? 'Deleted your oldest video to stay under the limit' : 'Deleted ' + n + ' old videos to stay under the limit');
+    }
+    async function remove(t, quiet) {
+      try { await op('readwrite', function (st) { return st.delete(Number(t)); }); } catch (e) { warn(e); }
+      delete S.videos[t]; save(); if (!quiet) renderHome();
+    }
+    async function clear() {
+      try { await op('readwrite', function (st) { return st.clear(); }); } catch (e) { warn(e); }
+      S.videos = {}; save(); renderHome();
+    }
+    function get(t) { return op('readonly', function (st) { return st.get(Number(t)); }); }
+    return { supported: supported, start: start, stop: stop, keep: keep, remove: remove, clear: clear, get: get, trim: trim, used: used, recording: function () { return !!rec; } };
+  })();
+  function fmtDur(sec) { sec = Math.max(0, sec | 0); return Math.floor(sec / 60) + ':' + pad(sec % 60); }
+  function fmtMB(b) { return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB'; }
+
   function saveSetupRec(st) {
     if (Cloud.on) fb.FS.setDoc(fb.FS.doc(fb.db, 'users', Cloud.user.uid, 'setups', st.id), st).catch(syncFail);
     else S.setups.push(st);
@@ -1307,12 +1466,46 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   }
   function closeSheet(instant) {
     if (!openEl) return; var el = openEl, sc = $('#scrim'); openEl = null;
+    if (el.id === 'videoSheet') closePlayer();
     el.classList.remove('open'); sc.classList.remove('open');
     setTimeout(function () { if (!el.classList.contains('open')) el.hidden = true; if (!openEl) sc.hidden = true; }, instant ? 0 : 320);
   }
   $('#scrim').addEventListener('click', function () { if (openEl && !openEl.hasAttribute('data-hard')) closeSheet(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openEl && !openEl.hasAttribute('data-hard')) closeSheet(); });
   $$('[data-close]').forEach(function (b) { b.addEventListener('click', function () { closeSheet(); }); });
+
+  var playing = { t: null, url: null, blob: null };
+  async function openVideo(t) {
+    var r; try { r = await Vid.get(t); } catch (e) { warn(e); }
+    if (!r || !r.blob) { toast('That video is no longer on this phone'); Vid.remove(t); return; }
+    closePlayer();
+    playing = { t: t, url: URL.createObjectURL(r.blob), blob: r.blob };
+    var pl = $('#player'); pl.src = playing.url;
+    var m = S.videos[t] || {};
+    $('#videoTitle').textContent = (m.reps ? m.reps + ' push-ups, ' : '') + new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    var canShare = false;
+    try { canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([r.blob], 'a.mp4', { type: r.blob.type })] })); } catch (e) {}
+    $('#videoShare').textContent = canShare ? 'Save to Photos' : 'Download';
+    var dl = $('#videoDelete'); dl.textContent = 'Delete video'; dl.dataset.armed = '';
+    openSheet('videoSheet');
+  }
+  function closePlayer() {
+    var pl = $('#player'); try { pl.pause(); } catch (e) {}
+    pl.removeAttribute('src'); try { pl.load(); } catch (e) {}
+    if (playing.url) URL.revokeObjectURL(playing.url);
+    playing = { t: null, url: null, blob: null };
+  }
+  function clipName(t, type) { var d = new Date(t); return 'anyfield-' + dkey(d) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + (/webm/.test(type) ? '.webm' : '.mp4'); }
+  $('#videoShare').addEventListener('click', function () {
+    if (!playing.blob) return;
+    var f = new File([playing.blob], clipName(playing.t, playing.blob.type), { type: playing.blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
+    var a = document.createElement('a'); a.href = playing.url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+  });
+  $('#videoDelete').addEventListener('click', function () {
+    var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to delete'; return; }
+    var t = playing.t; closeSheet(); if (t != null) Vid.remove(t).then(function () { toast('Video deleted'); });
+  });
 
   /* ---------- home ---------- */
   function fmtTime(ts) { return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
@@ -1348,7 +1541,17 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       var src = s.manual ? 'Added by hand' : (names[s.setup] || 'Camera');
       li.innerHTML = '<span class="set-time"></span><span class="set-src"></span><span class="set-reps"></span>' +
         '<button class="set-del" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
-      li.children[0].textContent = fmtTime(s.t); li.children[1].textContent = src; li.children[2].textContent = s.reps;
+      li.children[0].textContent = fmtTime(s.t); li.children[2].textContent = s.reps;
+      var srcText = document.createElement('span'); srcText.textContent = src; li.children[1].appendChild(srcText);
+      var vm = S.videos[s.t];
+      if (vm) {
+        var pb = document.createElement('button'); pb.type = 'button'; pb.className = 'play press';
+        pb.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 1.5v9l8-4.5z" fill="currentColor"/></svg>';
+        pb.appendChild(document.createTextNode(fmtDur(vm.dur)));
+        pb.setAttribute('aria-label', 'Play video of this set, ' + fmtDur(vm.dur));
+        pb.addEventListener('click', function () { openVideo(s.t); });
+        li.children[1].insertBefore(pb, srcText);
+      }
       var del = li.children[3]; del.setAttribute('aria-label', 'Remove set of ' + s.reps);
       var armT = null;
       del.addEventListener('click', function () {
@@ -1642,26 +1845,31 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       $('#repNum').style.setProperty('--p', Math.min(1, p).toFixed(3));
     }
     evs.forEach(function (e) {
-      if (e === 'armed') { setStatus('Tracking', 'live'); say('Go!'); }
+      if (e === 'armed') { setStatus('Tracking', 'live'); say('Go!'); if (S.videoCap && !Vid.recording() && sesStage.stream) Vid.start(sesStage.stream); }
       else if (e === 'rep') {
         setRep(counter.reps, true); sesStage.flashAt = performance.now(); flash('go'); repSound(counter.reps);
         if (counter.state !== 'arming') setStatus('Tracking', 'live');
         var total = sesBase + counter.reps;
         if (total === goalVal() && S.goalCheered !== dkey()) { S.goalCheered = dkey(); save(); flash('goal'); setTimeout(function () { say('Daily goal done!'); }, 450); setStatus('Daily goal done', 'live', 3000); }
       }
-      else if (e === 'partial') {
-        if (t - lastCue > 4000) { lastCue = t; setStatus('Go lower, that one didn’t count', 'warn', 2500); if (S.sound !== 'off') say('Lower'); }
+      else if (e === 'shallow') {
+        setStatus('Go lower', 'warn', 1800);
+        if (t - lastCue > 2500) { lastCue = t; if (S.sound === 'voice') say('Lower'); else if (S.sound === 'beep') beep(330, 160); }
       }
+      else if (e === 'nocount') setStatus('Not counted. Go lower on the next one', 'warn', 2200);
       else if (e === 'lost') setStatus('Can’t see you. Check the phone’s view', 'warn');
       else if (e === 'found') setStatus(counter.state === 'arming' ? 'Get into the top position and hold still' : 'Tracking', counter.state === 'arming' ? 'wait' : 'live');
     });
   }
+  var pendingClip = null;
   function endSession() {
-    if (!counter) { show('home'); return; }
+    if (!counter) { Vid.stop(); show('home'); return; }
     var reps = counter.reps;
-    if (sesStage) sesStage.stop(); clearInterval(sesTick); keepAwake(false);
+    pendingClip = Vid.stop();   // finish the recording before the camera stops
+    pendingClip.then(function () { if (sesStage) sesStage.stop(); });
+    clearInterval(sesTick); keepAwake(false);
     try { speechSynthesis.cancel(); } catch (e) {}
-    if (reps === 0) { counter = null; show('home'); renderHome(); return; }
+    if (reps === 0) { counter = null; pendingClip = null; show('home'); renderHome(); return; }
     $('#reviewInput').value = reps; openSheet('reviewSheet');
   }
   $('#sessionFinish').addEventListener('click', endSession);
@@ -1669,9 +1877,13 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   $('#reviewSave').addEventListener('click', function () {
     var n = Math.max(0, Math.min(1000, parseInt($('#reviewInput').value, 10) || 0));
     var id = sesSetup && sesSetup.id; counter = null; closeSheet(); show('home');
-    if (n > 0) { addSet(n, id, false); toast(n + ' push-ups saved'); } else renderHome();
+    var clipP = pendingClip; pendingClip = null;
+    if (n > 0) {
+      var t = addSet(n, id, false); toast(n + ' push-ups saved');
+      if (clipP) clipP.then(function (clip) { return Vid.keep(t, clip, n); });
+    } else renderHome();
   });
-  $('#reviewDiscard').addEventListener('click', function () { counter = null; closeSheet(); show('home'); renderHome(); toast('Set discarded'); });
+  $('#reviewDiscard').addEventListener('click', function () { counter = null; pendingClip = null; closeSheet(); show('home'); renderHome(); toast('Set discarded'); });
   $$('[data-rev]').forEach(function (b) { b.addEventListener('click', function () { var i = $('#reviewInput'); i.value = Math.max(0, (parseInt(i.value, 10) || 0) + +b.dataset.rev); }); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
@@ -1697,7 +1909,27 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     $('#depthInput').value = Math.round(depthVal() * 100); $('#depthOut').textContent = Math.round(depthVal() * 100) + '%';
     $$('input[name=sound]').forEach(function (r) { r.checked = r.value === S.sound; });
     $$('input[name=model]').forEach(function (r) { r.checked = r.value === S.model; });
+    $$('input[name=vcap]').forEach(function (r) { r.checked = +r.value === (S.videoCap || 0); });
+    renderVidUsage();
   }
+  function renderVidUsage() {
+    var n = Object.keys(S.videos).length, u = Vid.used(), cap = (S.videoCap || 0) * 1e6;
+    var bar = $('#vidUsage'); bar.hidden = !cap; if (cap) bar.firstChild.style.width = Math.min(100, u / cap * 100) + '%';
+    var h;
+    if (!Vid.supported()) h = 'This browser can’t record video.';
+    else if (!cap) h = n ? 'Recording is off. ' + n + (n === 1 ? ' saved video uses ' : ' saved videos use ') + fmtMB(u) + '.' : 'Record each set so you can check your form. Videos stay on this phone and are never uploaded.';
+    else h = (n ? fmtMB(u) + ' of ' + fmtMB(cap) + ' used by ' + n + (n === 1 ? ' video. ' : ' videos. ') : 'About 7 MB per minute. ') + 'Videos stay on this phone. When the limit is reached, the oldest are deleted first.';
+    $('#vidHint').textContent = h;
+    var c = $('#vidClear'); c.hidden = !n; c.textContent = 'Delete all videos'; c.dataset.armed = '';
+  }
+  $$('input[name=vcap]').forEach(function (r) { r.addEventListener('change', function () {
+    S.videoCap = +r.value; save();
+    Vid.trim().then(function () { save(); renderVidUsage(); renderHome(); });
+  }); });
+  $('#vidClear').addEventListener('click', function () {
+    var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to delete ' + Object.keys(S.videos).length + ' videos'; return; }
+    Vid.clear().then(function () { renderVidUsage(); toast('Videos deleted'); });
+  });
   function setGoal(v) { v = Math.max(1, Math.min(2000, v || 1)); setPref('goal', v); $('#goalInput').value = v; renderHome(); }
   $$('[data-goal]').forEach(function (b) { b.addEventListener('click', function () { setGoal(goalVal() + +b.dataset.goal); }); });
   $('#goalInput').addEventListener('change', function () { setGoal(parseInt(this.value, 10)); });
@@ -1755,6 +1987,9 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to leave'; return; }
     var id = Board.id; closeSheet(); if (id) leaveBoard(id);
   });
+
+  // Test handle, only on a local dev server.
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__anyfield = { Vid: Vid, S: S, addSet: addSet, renderHome: renderHome, save: save };
 
   renderHome();
   initCloud();
