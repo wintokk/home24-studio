@@ -1,6 +1,6 @@
 // Synthetic tests for the push-up calibration + counting logic extracted from index.html
 const fs = require('fs');
-const html = fs.readFileSync(process.argv[2] || require('path').join(__dirname, '..', 'index.html'), 'utf8');
+const html = fs.readFileSync(process.argv[2] || require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const code = html.split('/* LOGIC-START */')[1].split('/* LOGIC-END */')[0];
 new Function(code)();
 const { Calibrator, RepCounter, KEYS } = globalThis.PushLogic;

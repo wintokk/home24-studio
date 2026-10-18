@@ -1,0 +1,74 @@
+rules_version = '2';
+
+// Data model
+//   users/{uid}                      profile + settings (goal, depth, boards, boardNames)    owner only
+//   users/{uid}/sets/{setId}         one push-up set {day, t, reps, setup, manual}          owner only
+//   users/{uid}/days/{yyyy-mm-dd}    daily total {total} (atomic increments)                 owner only
+//   users/{uid}/setups/{setupId}     camera calibrations                                     owner only
+//   boards/{bid}                     a group {name, owner, createdAt}; the id is the invite  any signed-in user can read one by id
+//   boards/{bid}/members/{uid}       {name, photo, joinedAt}                                 members read; you add/remove yourself
+//   boards/{bid}/scores/{day_uid}    {uid, day, total, name, photo, updatedAt}               members read; you write your own
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isUser(uid) { return signedIn() && request.auth.uid == uid; }
+
+    match /users/{uid} {
+      allow read, write: if isUser(uid);
+      match /{document=**} {
+        allow read, write: if isUser(uid);
+      }
+    }
+
+    match /boards/{bid} {
+      function boardPath() { return /databases/$(database)/documents/boards/$(bid); }
+      function memberPath() { return /databases/$(database)/documents/boards/$(bid)/members/$(request.auth.uid); }
+      function isMember() { return signedIn() && exists(memberPath()); }
+      // true when the caller is a member once the current write (or batch) is applied
+      function willBeMember() { return signedIn() && existsAfter(memberPath()); }
+      function validName(n, max) { return n is string && n.size() > 0 && n.size() <= max; }
+
+      // Knowing the id is the invite: any signed-in user may read a single board, nobody may list them.
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'createdAt'])
+        && request.resource.data.owner == request.auth.uid
+        && validName(request.resource.data.name, 40);
+      allow update: if signedIn()
+        && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'createdAt'])
+        && validName(request.resource.data.name, 40);
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
+
+      match /members/{uid} {
+        allow read: if isMember();
+        allow create, update: if isUser(uid)
+          && existsAfter(boardPath())
+          && request.resource.data.keys().hasOnly(['name', 'photo', 'joinedAt'])
+          && validName(request.resource.data.name, 60)
+          && request.resource.data.photo is string && request.resource.data.photo.size() <= 600;
+        allow delete: if isUser(uid)
+          || (signedIn() && get(boardPath()).data.owner == request.auth.uid);
+      }
+
+      match /scores/{sid} {
+        allow read: if isMember();
+        allow create, update: if willBeMember()
+          && request.resource.data.keys().hasOnly(['uid', 'day', 'total', 'name', 'photo', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.day is string
+          && request.resource.data.day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && sid == request.resource.data.day + '_' + request.auth.uid
+          && request.resource.data.total is int
+          && request.resource.data.total >= 0
+          && request.resource.data.total <= 5000
+          && validName(request.resource.data.name, 60)
+          && request.resource.data.photo is string && request.resource.data.photo.size() <= 600;
+        allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      }
+    }
+  }
+}

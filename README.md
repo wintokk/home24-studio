@@ -7,10 +7,15 @@ Counts push-ups with the phone's front camera and keeps a daily log. It runs in 
 The app is front-end only. It is a static website with no backend, no accounts and no build step.
 
 ```
-index.html             the whole app: markup, CSS, JS
-manifest.webmanifest   home-screen install (name, colors, icons)
-icon-*.png             app icons
-test/logic.test.js     tests for the counting logic, run with Node
+public/                     the website (deployed as-is)
+  index.html                the whole app: markup, CSS, JS
+  firebase-config.js        Firebase web config for hosts other than Firebase Hosting
+  manifest.webmanifest      home-screen install (name, colors, icons)
+  icon-*.png                app icons
+test/logic.test.js          tests for the counting logic, run with Node
+.github/workflows/pages.yml runs the tests, then deploys public/ to GitHub Pages on every push to main
+firebase.json               Firebase Hosting + Firestore config (cloud sync, in progress)
+firestore.rules             Firestore security rules (private logs, group leaderboards)
 ```
 
 ### Runtime pipeline (all on-device)
@@ -58,7 +63,7 @@ There are three screens:
 
 Settings, setups, adding a set by hand, and reviewing a finished set happen in bottom sheets.
 
-The visual style is a dark studio. Liquid Glass is used only on controls, following Apple's guidance:
+The visual style is a dark matcha studio: deep green-black room, whisked-matcha accent, foam-white type set in Archivo. Liquid Glass is used only on controls, following Apple's guidance:
 - **Every browser:** backdrop blur and saturation, a gradient rim highlight, and a highlight that follows your touch.
 - **Chromium only:** the glass edges also bend what's behind them. This uses an SVG displacement map built per element and applied with `backdrop-filter: url()`, which Safari doesn't support.
 
@@ -78,12 +83,13 @@ Data is tied to the device and to the site address, so changing the address star
 
 The camera needs HTTPS, except on `localhost`.
 
-```sh
-python3 -m http.server 8000                       # desktop: http://localhost:8000
-cloudflared tunnel --url http://localhost:8000    # phone: open the printed https URL
-```
+- **Live:** every push to `main` deploys to https://wintokk.github.io/home24-studio/ (Settings → Pages → Source must be set to GitHub Actions). On iPhone or iPad, open it in Safari, tap Share → Add to Home Screen.
+- **Local:**
 
-To deploy, put the folder on any HTTPS static host, such as GitHub Pages, Cloudflare Pages or Netlify.
+```sh
+python3 -m http.server 8000 --directory public    # desktop: http://localhost:8000
+cloudflared tunnel --url http://localhost:8000     # phone: open the printed https URL
+```
 
 ## Test
 
