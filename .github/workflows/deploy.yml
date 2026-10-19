@@ -1,0 +1,44 @@
+name: Deploy
+
+# Deploys public/ to https://anyfield.web.app on every push to main that
+# changes the app. Signs in to Google Cloud with Workload Identity Federation
+# (no stored key); see scripts/setup-auto-deploy.sh.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'firebase.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Counting logic
+        run: node test/logic.test.js
+      - name: Page scripts parse
+        run: |
+          node -e "const s=require('fs').readFileSync('public/index.html','utf8');[...s.matchAll(/<script>([\s\S]*?)<\/script>/g)].forEach((m,i)=>{new Function(m[1]);console.log('script',i,'ok')})"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/406293937840/locations/global/workloadIdentityPools/github/providers/github
+          service_account: github-deploy@home24-studio.iam.gserviceaccount.com
+      - name: Deploy to Firebase Hosting
+        run: npx -y firebase-tools@15 deploy --only hosting --project home24-studio --non-interactive
+      - name: Check the live site
+        run: curl -fsS https://anyfield.web.app/ | grep -q "CONFIRM = 2"
