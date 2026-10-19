@@ -27,7 +27,12 @@ function timeline() {
           if (i < half) d = Math.min(d, opts.pauseAt);
         }
         if (opts.bounce && Math.abs(i - n / 2) < n * 0.08) d = depth - opts.bounce * Math.cos(Math.PI * (i - n / 2) / (n * 0.08)) ** 2;
-        f.push({ t: (t += DT), d, nod: 0, shuffle: 0 });
+        const fr = { t: (t += DT), d, nod: 0, shuffle: 0 };
+        // glitch: for a few frames at the bottom the tracker reports you back at the top
+        if (opts.glitch && i >= Math.floor(n / 2) && i < Math.floor(n / 2) + opts.glitch) fr.glitch = opts.glitchTo != null ? opts.glitchTo : 0;
+        // miss: tracking lost between these fractions of the rep
+        if (opts.miss && i / n >= opts.miss[0] && i / n < opts.miss[1]) fr.miss = true;
+        f.push(fr);
         if (opts.pauseAt != null && i === Math.floor(n / 2) - Math.floor(n * 0.15)) for (let k = 0; k < 0.6 * FPS; k++) f.push({ t: (t += DT), d: opts.pauseAt, nod: 0, shuffle: 0 });
       }
       return api.hold(0.4);
@@ -37,6 +42,20 @@ function timeline() {
       const seg = (a, b, sec) => { const n = Math.round(sec * FPS); for (let i = 1; i <= n; i++) f.push({ t: (t += DT), d: a + (b - a) * i / n, nod: 0, shuffle: 0 }); };
       seg(0, turnAt, 0.8); seg(turnAt, turnAt - back, 0.35); seg(turnAt - back, finishDepth, 0.6); seg(finishDepth, 0, 0.9);
       return api.hold(0.4);
+    },
+    // free-form movement through depth waypoints [[depth, seconds], ...], eased between points
+    path(points, opts = {}) {
+      let from = f.length ? f[f.length - 1].d : 0;
+      for (const [to, sec] of points) {
+        const n = Math.max(1, Math.round(sec * FPS));
+        for (let i = 1; i <= n; i++) {
+          let d = from + (to - from) * (1 - Math.cos(Math.PI * i / n)) / 2;
+          if (opts.wobble && to < from) d += opts.wobble * Math.sin(2 * Math.PI * 6 * i / FPS);
+          f.push({ t: (t += DT), d, nod: 0, shuffle: 0 });
+        }
+        from = to;
+      }
+      return api.hold(0.3);
     },
     nod(amount = 1, sec = 0.35) { const n = Math.round(sec * FPS); for (let i = 0; i < n; i++) f.push({ t: (t += DT), d: 0, nod: amount * Math.sin(Math.PI * i / n), shuffle: 0 }); return api; },
     shuffle(amount = 1, sec = 0.45) { const n = Math.round(sec * FPS); for (let i = 0; i < n; i++) f.push({ t: (t += DT), d: 0, nod: 0, shuffle: amount * Math.sin(Math.PI * i / n) }); return api; },
@@ -67,6 +86,8 @@ function count(cal, view, tl, opts = {}) {
     const vals = views[view](f.d, f.nod, f.shuffle);
     if (opts.shift) for (const k of ['chest', 'head', 'shoulderY', 'headY']) if (vals[k] != null) vals[k] += opts.shift;
     let v = vals[cal.signal];
+    if (f.glitch != null) v = views[view](f.glitch, 0, 0)[cal.signal];
+    if (f.miss) v = null;
     if (opts.dropout && i >= opts.dropout[0] && i < opts.dropout[1]) v = null;
     rc.push(f.t, v).forEach(e => evs.push({ e, t: f.t }));
   });
@@ -149,7 +170,7 @@ r = count(sideCal, 'side', tl);
 check('cue then deeper: counts the rep', r.rc.reps === 1 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
 
 // Pausing halfway down is not a shallow rep.
-tl = timeline().hold(1.5).rep(1, 2, { pauseAt: 0.55 }).rep(1, 2, { pauseAt: 0.6 });
+tl = timeline().hold(1.5).path([[0.55, 0.5], [0.55, 0.6], [1, 0.45], [0, 0.9]]).path([[0.6, 0.5], [0.6, 0.6], [1, 0.45], [0, 0.9]]);
 r = count(sideCal, 'side', tl);
 check('pause halfway then finish: counts, no cue', r.rc.reps === 2 && r.n('shallow') === 0 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
 
@@ -164,6 +185,37 @@ tl = timeline().hold(1.5).rep(1, 1.6).nod(1).hold(0.3).nod(1).rep(1, 1.6).nod(1)
 r = count(headCal, 'front', tl);
 check('head tracking: nods are neither reps nor "lower" cues', r.rc.reps === 3 && r.n('shallow') === 0 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
 
+// Tracking glitches at the bottom (face close to a floor-level phone): the tracker briefly reports you
+// back at the top, then recovers. Each push-up must still count once.
+for (const [name, cal, view] of [['side', sideCal, 'side'], ['front', frontCal, 'front']]) {
+  for (const g of [1, 3, 6]) {
+    tl = timeline().hold(1.5); for (let i = 0; i < 8; i++) tl.rep(1, 1.8, i % 2 ? { glitch: g } : {});
+    r = count(cal, view, tl);
+    check(`${name}: ${g}-frame glitch at the bottom of every other rep: no double counts`, r.rc.reps === 8, 'got ' + r.rc.reps);
+  }
+  tl = timeline().hold(1.5); for (let i = 0; i < 6; i++) tl.rep(1, 1.8, { glitch: 3, glitchTo: 0.15 });
+  r = count(cal, view, tl);
+  check(`${name}: glitch to almost the top on every rep: no double counts`, r.rc.reps === 6, 'got ' + r.rc.reps);
+}
+
+// Going deeper than in calibration, then a sag on the way up before reaching the top: one rep each.
+for (const [name, cal, view] of [['side', sideCal, 'side'], ['front', frontCal, 'front']]) {
+  tl = timeline().hold(1.5); for (let i = 0; i < 6; i++) tl.path([[1.7, 0.9], [0.22, 0.7], [0.8, 0.45], [0, 0.6]]);
+  r = count(cal, view, tl);
+  check(`${name}: deep reps with a sag on the way up: one count each`, r.rc.reps === 6, 'got ' + r.rc.reps);
+  tl = timeline().hold(1.5); for (let i = 0; i < 6; i++) tl.path([[1.5, 0.9], [0, 1.1]], { wobble: 0.18 });
+  r = count(cal, view, tl);
+  check(`${name}: shaky way up: one count each`, r.rc.reps === 6, 'got ' + r.rc.reps);
+  tl = timeline().hold(1.5); [1.6, 1.6, 1.6, 0.9, 0.85, 1, 1].forEach(dp => tl.rep(dp, 1.6));
+  r = count(cal, view, tl);
+  check(`${name}: deep reps then normal-depth reps: all count`, r.rc.reps === 7, 'got ' + r.rc.reps);
+}
+
+// Tracking lost partway down and back only once you're on the way up: still one rep, and no "lower".
+tl = timeline().hold(1.5); for (let i = 0; i < 5; i++) tl.rep(1, 1.8, { miss: [0.3, 0.8] });
+r = count(sideCal, 'side', tl);
+check('lost partway down, back on the way up: counts every rep, no cue', r.rc.reps === 5 && r.n('shallow') === 0 && r.n('nocount') === 0, `reps ${r.rc.reps}, shallow ${r.n('shallow')}, nocount ${r.n('nocount')}`);
+
 tl = timeline().hold(1.5); for (let i = 0; i < 10; i++) tl.rep(1, 1.6);
 r = count(frontCal, 'front', tl, { shift: 0.025 });
 check('front: phone moved a little since calibration, still counts 10', r.rc.reps === 10, 'got ' + r.rc.reps);
@@ -171,6 +223,27 @@ check('front: phone moved a little since calibration, still counts 10', r.rc.rep
 tl = timeline().hold(1.5); for (let i = 0; i < 20; i++) tl.rep(1, 0.9);
 r = count(sideCal, 'side', tl);
 check('fast reps (0.9 s) all counted', r.rc.reps === 20, 'got ' + r.rc.reps);
+
+// Randomized sets (fixed seed): deep and shallow-ish reps at varied speeds, with glitches, sags,
+// wobble on the way up and tracking dropouts mixed in. Over-counting is the failure that matters most.
+{
+  const sets = 150; let over = 0, under = 0, total = 0;
+  for (const [cal, view] of [[sideCal, 'side'], [frontCal, 'front']]) for (let s = 0; s < sets; s++) {
+    tl = timeline().hold(1.5); let truth = 0;
+    for (let r = 0; r < 10; r++) {
+      const depth = 0.8 + rnd() * 1.0, sec = 0.9 + rnd() * 1.6, o = {};
+      if (rnd() < 0.4) { o.glitch = 1 + Math.floor(rnd() * 6); o.glitchTo = rnd() * 0.2; }
+      if (rnd() < 0.15) o.miss = [0.3 + rnd() * 0.2, 0.55 + rnd() * 0.2];
+      if (rnd() < 0.3) tl.path([[depth, sec / 2], [0.22, sec * 0.35], [0.22 + 0.4 * rnd(), 0.3], [0, 0.4]]);
+      else tl.rep(depth, sec, o);
+      truth++;
+    }
+    r = count(cal, view, tl); total += truth;
+    if (r.rc.reps > truth) over += r.rc.reps - truth; else under += truth - r.rc.reps;
+  }
+  check(`randomized disturbed sets: no extra counts in ${total} reps`, over === 0, `extra ${over}, missed ${under}`);
+  check(`randomized disturbed sets: misses under 1%`, under < total * 0.01, `missed ${under} of ${total}`);
+}
 
 { const rc = new RepCounter(sideCal, { depth: 0.7 }); let cues = 0;
   for (let t = 0; t < 20000; t += 33) cues += rc.push(t, views.side(0, 0, 0).elbow).filter(e => e !== 'armed').length;

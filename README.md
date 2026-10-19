@@ -154,10 +154,12 @@ U = min(0.30, D − 0.20)             "back at the top" line
 stateDiagram-v2
   [*] --> arming
   arming --> up: still near the top for 1 s (re-baseline)
-  up --> down: p ≥ D
-  down --> up: p < U and timing guards pass → COUNT
+  up --> down: p ≥ D for 2 frames and moved ≥ band from the top
+  down --> up: p < U for 2 frames, moved ≥ band from the bottom, timing guards pass → COUNT
   up --> up: shallow attempt → "Lower" / "Not counted"
 ```
+
+Every frame goes through a glitch filter before smoothing, and both transitions need the same evidence: two frames in a row past the line, and a full-sized movement since the last transition.
 
 **Arming and re-baseline.** A set starts once the values over 1 s have a standard deviation below `tol = max(stab, 3σ_cal)` and their mean progress p̄ is within 0.6 of the top. If p̄ is within 0.35, the top is re-anchored to the current mean m, so a phone placed a little differently from calibration day still counts correctly:
 
@@ -167,7 +169,24 @@ stateDiagram-v2
 | ratio | m | m · down / up |
 | absolute | unchanged | unchanged |
 
-**Counting.** A rep is counted on the way back up: down → up when p < U. Three guards apply:
+**Glitch filter.** Pose models sometimes put a landmark in the wrong place for a few frames, most often at the bottom when your face is close to a floor-level phone. The filter works on raw progress, frame to frame:
+- **Reject:** a frame whose progress jumps more than `max(0.35, 6/s · Δt) · k` from the last accepted frame is held back. No push-up moves that fast.
+- **Stay rejected:** later frames stay rejected while they're closer to the glitch value than to the last good value.
+- **Accept as real:** if the new level lasts 500 ms, it was a real move (or the phone moved). It's accepted and smoothing restarts from it.
+
+**Movement size.** Each transition needs a full-sized movement, not just a line crossing:
+
+```
+amplitude = deepest p of the rep − lowest p before it     (kept for the last 3 reps)
+k         = median(amplitudes), clamped to 1–3            (1 until the first rep)
+band      = (D − U) · k
+up → down needs   p − lowest p since the last count   ≥ band
+down → up needs   deepest p since going down − p      ≥ band
+```
+
+If your reps are twice as deep as your calibration reps, a sag or wobble on the way up that dips back below D no longer looks like a new rep, because it isn't a band-sized movement. Going back to normal-depth reps shrinks k again within three reps.
+
+**Counting.** A rep is counted on the way back up: down → up when p < U for two frames in a row and the band is covered. Three timing guards also apply:
 - at least 200 ms since crossing the depth line;
 - at least 600 ms since the previous rep, so a bounce at the bottom counts once;
 - at least 450 ms since the dip started, so a nod can't count.
@@ -185,7 +204,7 @@ nocount  = attempt and p < 0.15                        → "Not counted. Go lowe
 
 **Tracking loss.**
 - **Reporting:** no value for more than 1 s (2.5 s before the first sighting) emits `lost`; the next value emits `found`.
-- **Recovery:** after any gap longer than 250 ms the smoothing restarts. If you were partway down (e ≥ 0.5), the gap lasted 0.3–3 s, and you're back at the top, the rep counts. This covers the common case of your face getting too close to a floor-level phone at the bottom.
+- **Recovery:** after any gap longer than 250 ms the smoothing restarts. If you were partway down (e ≥ 0.3) and the gap lasted up to 3 s, the counter waits: back at the top (p < U) counts the rep; still past D means you're at the bottom, so the normal path takes over. This covers the common case of your face getting too close to a floor-level phone at the bottom.
 
 ### 5. Parameters
 
@@ -202,6 +221,10 @@ nocount  = attempt and p < 0.15                        → "Not counted. Go lowe
 | agreement | second-largest count over Sₖ ≥ 4 | calibration | two measurements must agree |
 | finish | N ≥ 3, ≥ 3 s, timeout 40 s | calibration | |
 | D, U | 0.70, min(0.3, D − 0.2) | counter | depth line and back-at-top line |
+| `CONFIRM` | 2 frames | counter | one bad frame can't cross a line |
+| `JUMP`, `VJUMP` | 0.35, 6 /s (× k) | glitch filter | faster than any push-up |
+| `GLITCH_MS` | 500 ms | glitch filter | a new level that lasts is real |
+| band | (D − U) · k, k = median of last 3 amplitudes in 1–3 | counter | a transition needs a full-sized movement |
 | refractory | 600 ms | counter | one count per rep despite bounces |
 | attempt | e ≥ 0.45 and ≥ 350 ms | counter | only real dips get a cue |
 | turn | 0.10 | counter | larger than tracking noise in progress units |
@@ -218,10 +241,14 @@ nocount  = attempt and p < 0.15                        → "Not counted. Go lowe
 | False "lower" on full reps or pauses | Attempt rule and the 0.10 turn | *no "lower" cue on full reps*, *pause halfway then finish* |
 | Bounce at the bottom counted twice | Single `down` state and 600 ms refractory | *bounce at the bottom: no double counts* |
 | Phone not in exactly the same spot | Re-baseline when arming | *phone moved a little since calibration* |
-| Tracking lost near the floor | Gap recovery | *tracking dropout reported and recovered* |
+| Tracking lost near the floor | Gap recovery | *tracking dropout reported and recovered*, *lost partway down, back on the way up* |
+| A landmark glitch at the bottom counts twice | Glitch filter and 2-frame confirmation | *1/3/6-frame glitch at the bottom*, *glitch to almost the top* (side and front) |
+| A sag or jitter on the way up counts twice | Movement-size band scaled by recent rep depth | *deep reps with a sag on the way up*, *shaky way up* |
+| Deep reps make later normal reps miss | k follows the last 3 reps | *deep reps then normal-depth reps: all count* |
 | Fast reps missed | Timing rules allow 0.9 s reps | *fast reps (0.9 s) all counted* |
+| All of the above at once | — | *randomized disturbed sets*: 150 seeded sets × 2 views × 10 reps with random glitches, sags, wobble, bounces and dropouts; 0 extra counts, under 1% missed |
 
-Run against the code before these fixes, the suite fails 7 checks.
+Against the counter before the double-count fix, the suite fails 10 checks, and the randomized check finds 316 extra counts in 3000 reps.
 
 ### 7. Limitations
 
@@ -290,6 +317,8 @@ Everything is stored under one `localStorage` key, `pushStudio.v1`:
   log: { "YYYY-MM-DD": { sets: [{ t, reps, setup, manual }] } } }
 ```
 
+The last set's tracking data (see Test) is kept separately under `anyfield.trace` and replaced by each new set.
+
 Data is tied to the device and to the site address, so changing the address starts a fresh log. On iOS, add the app to the home screen so Safari doesn't clear site storage after a week of not opening it. Use Settings → Export CSV for backups.
 
 ## Run
@@ -307,8 +336,11 @@ python3 -m http.server 8000 --directory public    # desktop: http://localhost:80
 ## Test
 
 ```sh
-node test/logic.test.js                 # 30 checks
+node test/logic.test.js                      # 47 checks
 node test/logic.test.js path/to/index.html   # run the same checks against another copy of the app
+node test/replay.js anyfield-tracking.json   # replay a real set through the current counter (--frames for every frame)
 ```
 
-The tests generate push-up timelines (holds, reps of chosen depth and speed, pauses, bounces, nods, shuffles, tracking gaps). They turn each into per-signal values as a side camera and a floor-in-front camera would see them, with tracking noise, then run them through `Calibrator` and `RepCounter`. The failure-modes table above lists which check covers which behaviour.
+The tests generate push-up timelines (holds, reps of chosen depth and speed, pauses, bounces, nods, shuffles, landmark glitches, sags, wobble, tracking gaps). They turn each into per-signal values as a side camera and a floor-in-front camera would see them, with tracking noise, then run them through `Calibrator` and `RepCounter`. The failure-modes table above lists which check covers which behaviour.
+
+**Tracking data from a real set.** The app keeps the numbers from your last set (no video): per frame, the time, the raw value of the chosen signal, progress, counter state, reps, events and all six signals. Settings → Tracking data → Share sends it as `anyfield-tracking-YYYY-MM-DD-HHMM.json`. `test/replay.js` runs those frames through the current `RepCounter` and prints both counts and the time between counts, so a miscount on the phone can be reproduced and turned into a test.

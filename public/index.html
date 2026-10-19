@@ -605,6 +605,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     <div class="usage" id="vidUsage" hidden><i></i></div>
     <p class="hint" id="vidHint"></p>
     <button class="link danger" id="vidClear" type="button" style="align-self:flex-start" hidden>Delete all videos</button></div>
+  <div class="row" id="traceRow" hidden><div style="min-width:0"><span class="lbl">Tracking data</span><p class="hint" id="traceHint"></p></div><button class="btn plain press" id="traceShare" type="button" style="width:auto;height:44px;flex:none">Share</button></div>
   <div class="row"><span class="lbl">Your log</span><button class="btn plain press" id="exportBtn" type="button" style="width:auto;height:42px">Export CSV</button></div>
   <p class="hint" id="storeHint">Your log and setups are stored on this device only.</p>
 </div>
@@ -837,10 +838,22 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     this.tol = Math.max(this.sig.stab, 3 * (cal.noise || 0));
     this.state = 'arming'; this.reps = 0; this.ema = null; this.buf = []; this.t0 = null;
     this.lastSeen = null; this.lost = false; this.exc = 0; this.excT = 0; this.cued = false; this.downAt = 0; this.lastRepT = -1e9; this.p = null;
+    this.topMin = 0; this.botMax = 0; this.amps = []; this.aboveN = 0; this.belowN = 0;
+    this.lastP = null; this.lastPT = 0; this.rejT = 0; this.pendingDrop = false;
   }
   // Cue thresholds (progress units): a dip counts as an attempt once it passes HALF, and the
   // "lower" cue fires when you turn back up by TURN without reaching the depth line.
   var HALF = 0.45, TURN = 0.1;
+  // Clean transitions: a state change needs CONFIRM frames in a row.
+  // Glitch filter: a frame-to-frame jump bigger than max(JUMP, VJUMP·dt) can't be a body moving, so
+  // it starts a glitch. Frames stay held back while they're closer to the glitch value than to the
+  // last good value. A jump that holds for GLITCH_MS is real (the phone moved).
+  var CONFIRM = 2, JUMP = 0.35, VJUMP = 6, GLITCH_MS = 500;
+  // How big your reps actually are, relative to calibration (median of the last 3, at least 1).
+  // A new rep must move at least (depth line − top line) × this, so a wobble can't start one.
+  RepCounter.prototype.scale = function () {
+    return this.amps.length ? Math.min(3, Math.max(1, median(this.amps))) : 1;
+  };
   RepCounter.prototype.progress = function (v) { return (v - this.up) / (this.down - this.up); };
   RepCounter.prototype.rebaseline = function (m) {
     var k = this.sig.kind;
@@ -857,14 +870,27 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     }
     var gap = this.lastSeen != null ? t - this.lastSeen : 0;
     if (this.lost) { this.lost = false; ev.push('found'); }
-    if (gap > 250) this.ema = null;
     this.lastSeen = t;
+    var k = this.scale(), pr = this.progress(raw), dropped = gap > 250, restart = dropped;
+    if (dropped) this.rejT = 0;
+    if (this.state !== 'arming' && !dropped && this.lastP != null) {
+      var dist = Math.abs(pr - this.lastP), dt = (t - this.lastPT) / 1000;
+      if (!this.rejT) {
+        if (dist > Math.max(JUMP, VJUMP * dt) * k) { this.rejT = t; this.glitchP = pr; return ev; }   // glitch starts
+      } else if (Math.abs(pr - this.glitchP) < dist) {
+        this.glitchP = pr;
+        if (t - this.rejT < GLITCH_MS) return ev;    // still nearer the glitch: skip the frame
+        restart = true;                              // the jump held, so it's real
+      }
+    }
+    this.rejT = 0; this.lastP = pr; this.lastPT = t;
+    if (restart) { this.ema = null; this.aboveN = 0; this.belowN = 0; }
     this.ema = this.ema == null ? raw : this.ema + 0.5 * (raw - this.ema);
     var v = this.ema, p = this.progress(v); this.p = p;
-    if (gap > 250 && this.state === 'up') {
-      // Tracking dropped mid-descent (often the face nearing a floor-level phone). If the gap fits a rep
-      // and you come back at the top, count it; otherwise forget the half-seen movement.
-      if (this.exc >= 0.5 && gap >= 300 && gap <= 3000 && p < this.upTh) { this.reps++; this.lastRepT = t; ev.push('rep'); }
+    if (dropped && this.state === 'up') {
+      // Tracking dropped partway down (often the face nearing a floor-level phone). If the gap fits a
+      // rep, count it once you're back at the top; going deep again first means it wasn't one.
+      this.pendingDrop = this.exc >= 0.3 && gap <= 3000;
       this.exc = 0; this.excT = 0; this.cued = false;
     }
 
@@ -875,23 +901,42 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
         var xs = this.buf.map(function (b) { return b.v; }), m = mean(xs), s = std(xs), pm = this.progress(m);
         if (s < this.tol && Math.abs(pm) <= 0.6) {
           if (Math.abs(pm) <= 0.35) this.rebaseline(m);
-          this.state = 'up'; this.exc = 0; this.excT = 0; this.cued = false; this.buf = []; this.p = this.progress(v); ev.push('armed');
+          this.state = 'up'; this.exc = 0; this.excT = 0; this.cued = false; this.buf = []; this.p = this.progress(v);
+          this.topMin = this.p; this.lastP = this.progress(raw); this.lastPT = t; ev.push('armed');
         }
       }
       return ev;
     }
+    var band = (this.depth - this.upTh) * k;
     if (this.state === 'up') {
-      if (p > this.upTh && !this.excT) this.excT = t;
-      if (p >= this.depth) { this.state = 'down'; this.downAt = t; }
-      else {
-        if (p > this.exc) this.exc = p;
-        var attempt = this.exc >= HALF && this.excT && t - this.excT >= 350;
-        // Said while you're still down, so you can still go lower and have the rep count.
-        if (attempt && !this.cued && p <= this.exc - TURN) { this.cued = true; ev.push('shallow'); }
-        if (p < 0.15) { if (attempt) ev.push('nocount'); this.exc = 0; this.excT = 0; this.cued = false; }
+      if (this.pendingDrop) {
+        if (p < this.upTh) {
+          this.pendingDrop = false; this.topMin = p;
+          if (t - this.lastRepT >= 600) { this.reps++; this.lastRepT = t; ev.push('rep'); }
+          return ev;
+        }
+        if (p < this.depth) return ev;               // still on the way up: no cues while recovering
+        this.pendingDrop = false;
       }
-    } else if (p < this.upTh && t - this.downAt >= 200 && t - this.lastRepT >= 600 && (!this.excT || t - this.excT >= 450)) {
-      this.state = 'up'; this.reps++; this.lastRepT = t; this.exc = 0; this.excT = 0; this.cued = false; ev.push('rep');
+      if (p < this.topMin) this.topMin = p;
+      if (p > this.upTh && !this.excT) this.excT = t;
+      // Down: past the depth line AND a full-sized move from where you last were at the top.
+      this.aboveN = p >= this.depth && p - this.topMin >= band ? this.aboveN + 1 : 0;
+      if (this.aboveN >= CONFIRM) { this.state = 'down'; this.downAt = t; this.botMax = p; this.aboveN = 0; this.belowN = 0; return ev; }
+      if (p > this.exc) this.exc = p;
+      var attempt = this.exc >= HALF && this.exc - this.topMin >= HALF * k && this.excT && t - this.excT >= 350;
+      // Said while you're still down, so you can still go lower and have the rep count.
+      if (attempt && !this.cued && p <= this.exc - TURN * k) { this.cued = true; ev.push('shallow'); }
+      if (p < 0.15) { if (attempt) ev.push('nocount'); this.exc = 0; this.excT = 0; this.cued = false; }
+    } else {
+      if (p > this.botMax) this.botMax = p;
+      // Up: back above the top line AND a full-sized move from the bottom, held for CONFIRM frames.
+      this.belowN = p < this.upTh && this.botMax - p >= band ? this.belowN + 1 : 0;
+      if (this.belowN >= CONFIRM && t - this.downAt >= 200 && t - this.lastRepT >= 600 && (!this.excT || t - this.excT >= 450)) {
+        this.amps.push(this.botMax - this.topMin); if (this.amps.length > 3) this.amps.shift();
+        this.state = 'up'; this.reps++; this.lastRepT = t; this.exc = 0; this.excT = 0; this.cued = false;
+        this.topMin = p; this.belowN = 0; ev.push('rep');
+      }
     }
     return ev;
   };
@@ -1821,7 +1866,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   async function startSession() {
     var st = activeSetup(); if (!st) { openSetup(); return; }
     closeSheet(true); unlockAudio(); keepAwake(true); show('session');
-    sesSetup = st; counter = new L.RepCounter(st, { depth: depthVal() }); sesBase = dayTotal(dkey());
+    sesSetup = st; counter = new L.RepCounter(st, { depth: depthVal() }); sesBase = dayTotal(dkey()); traceStart(st);
     $('#repNum').textContent = ''; setRep(0); $('#repOf').textContent = st.name; $('#tubeMark').style.bottom = 'calc(' + (depthVal() * 100) + '% - 1px)';
     $('#tubeLiquid').style.height = '0'; $('#repNum').style.setProperty('--p', 0);
     sesStart = Date.now(); $('#sessionTime').textContent = '0:00';
@@ -1834,10 +1879,40 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var ok = await startStage(sesStage, function (t, k) { if (t) setStatus(t, k === 'err' ? 'err' : 'wait'); });
     if (ok) setStatus('Get into the top position and hold still', 'wait');
   }
+  /* ---------- tracking data from the last set, for diagnosing miscounts (numbers only, no video) ---------- */
+  var sesTrace = null, lastTrace = null;
+  try { lastTrace = JSON.parse(localStorage.getItem('anyfield.trace') || 'null'); } catch (e) {}
+  function r4(x) { return x == null || !isFinite(x) ? null : Math.round(x * 1e4) / 1e4; }
+  function traceStart(st) {
+    sesTrace = { app: 'anyfield', format: 1, start: Date.now(), userAgent: navigator.userAgent, model: S.model, depth: depthVal(),
+      setup: { signal: st.signal, up: st.up, down: st.down, noise: st.noise, quality: st.quality, place: st.place },
+      columns: ['t_ms', 'signal', 'progress', 'state', 'reps', 'events', 'all_signals'], signals: L.KEYS, frames: [] };
+  }
+  function traceFrame(t, lm, W, H, v, evs) {
+    if (!sesTrace || sesTrace.frames.length >= 9000) return;
+    var all = lm ? L.readAll(lm, W, H) : null;
+    sesTrace.frames.push([Math.round(t), r4(v), r4(counter.p), counter.state, counter.reps, evs.join('|'),
+      all ? L.KEYS.map(function (k) { return r4(all[k]); }) : null]);
+  }
+  function traceEnd() {
+    if (!sesTrace || !counter) { sesTrace = null; return; }
+    sesTrace.reps = counter.reps; lastTrace = sesTrace; sesTrace = null;
+    try { localStorage.setItem('anyfield.trace', JSON.stringify(lastTrace)); } catch (e) {}
+  }
+  $('#traceShare').addEventListener('click', function () {
+    if (!lastTrace) return;
+    var d = new Date(lastTrace.start), name = 'anyfield-tracking-' + dkey(d) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
+    var f = new File([JSON.stringify(lastTrace)], name, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
+    var url = URL.createObjectURL(f), a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  });
+
   function onSesPose(t, lm, W, H) {
     if (!counter) return;
     var v = lm ? SIGNALS[sesSetup.signal].read(lm, W, H) : null;
     var evs = counter.push(t, v);
+    traceFrame(t, lm, W, H, v, evs);
     if (counter.p != null) {
       var p = Math.max(0, Math.min(1.1, counter.p));
       $('#tubeLiquid').style.height = 'calc(' + Math.min(100, p * 100) + '% - 6px)';
@@ -1865,6 +1940,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   function endSession() {
     if (!counter) { Vid.stop(); show('home'); return; }
     var reps = counter.reps;
+    traceEnd();
     pendingClip = Vid.stop();   // finish the recording before the camera stops
     pendingClip.then(function () { if (sesStage) sesStage.stop(); });
     clearInterval(sesTick); keepAwake(false);
@@ -1911,6 +1987,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     $$('input[name=model]').forEach(function (r) { r.checked = r.value === S.model; });
     $$('input[name=vcap]').forEach(function (r) { r.checked = +r.value === (S.videoCap || 0); });
     renderVidUsage();
+    $('#traceRow').hidden = !lastTrace;
+    if (lastTrace) $('#traceHint').textContent = 'From your set at ' + fmtTime(lastTrace.start) + ' (' + lastTrace.reps + ' counted). Numbers only, no video. Send it if a count was wrong.';
   }
   function renderVidUsage() {
     var n = Object.keys(S.videos).length, u = Vid.used(), cap = (S.videoCap || 0) * 1e6;
