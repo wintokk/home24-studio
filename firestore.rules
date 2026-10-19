@@ -5,6 +5,7 @@ rules_version = '2';
 //   users/{uid}/sets/{setId}         one push-up set {day, t, reps, setup, manual}          owner only
 //   users/{uid}/days/{yyyy-mm-dd}    daily total {total} (atomic increments)                 owner only
 //   users/{uid}/setups/{setupId}     camera calibrations                                     owner only
+//   users/{uid}/countlog/{start}     counter tracking data of a set, gzipped (last 20)        owner only
 //   boards/{bid}                     a group {name, owner, createdAt}; the id is the invite  any signed-in user can read one by id
 //   boards/{bid}/members/{uid}       {name, photo, joinedAt}                                 members read; you add/remove yourself
 //   boards/{bid}/scores/{day_uid}    {uid, day, total, name, photo, updatedAt}               members read; you write your own

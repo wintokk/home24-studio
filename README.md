@@ -305,6 +305,15 @@ Recording is off by default. In Settings → Save set videos, pick a limit of 25
 - **Saving:** a clip is kept only if you save the set; discarding the set drops it. Clips go in IndexedDB (`anyfield-video`, keyed by the set's timestamp) and are never uploaded.
 - **Limit:** when the total passes the limit, the oldest clips are deleted first. A recording stops on its own at 90% of the limit.
 - **Playback:** a play chip on the set row opens a player with Save to Photos (Web Share with a file) or Download, and Delete. Deleting a set also deletes its video.
+- **Count track:** when the set is also in the count log, the player shows the counter's view in step with the video: the count so far on the video, and under it the progress curve (down is down) with the depth and back-at-top lines, a numbered mark at each count and a dot at each "lower" cue. Tap the track to jump to a second before that point. This is the quickest way to see where an extra count came from.
+
+### Count log
+
+On by default; Settings → Count log turns it off (which deletes the log).
+- **What's logged:** for each of the last 20 sets, the counter's input and output per frame: time, raw value of the chosen signal, progress, state, reps, events and all six signals. No video and no landmarks. Also the setup, depth, model, browser and, if a video was recorded, when it started in the same clock.
+- **Ground truth:** the review sheet after a set already lets you fix the count. The log stores both numbers: `counted` (the counter) and `saved` (what you saved). A set you saved lower had extra counts; higher had missed ones. Discarded sets are marked `discarded`.
+- **Where:** IndexedDB `anyfield-log` on the phone. When you're signed in, a gzipped copy goes to `users/{uid}/countlog/{start}` in Firestore, which only you (and the project owner) can read. Sets dropped from the last 20 are deleted there too.
+- **Getting it out:** Settings → Count log → Share log sends one JSON file with every logged set. Or, from Cloud Shell, `node scripts/pull-countlog.js <your email> > countlog.json` downloads the backed-up copy (see Test).
 
 ### Storage
 
@@ -314,10 +323,10 @@ Everything is stored under one `localStorage` key, `pushStudio.v1`:
 { setups: [{ id, name, place, signal, up, down, noise, score, quality }],
   active, goal, depth, sound, model, videoCap,          // videoCap in MB, 0 = off
   videos: { "<set t>": { size, dur, reps, type, day } }, // index of clips in IndexedDB
+  countLog,                                             // count log on/off
+  clog: { "<start>": { counted, saved, status, setT, cloud } }, // index of the count log in IndexedDB
   log: { "YYYY-MM-DD": { sets: [{ t, reps, setup, manual }] } } }
 ```
-
-The last set's tracking data (see Test) is kept separately under `anyfield.trace` and replaced by each new set.
 
 Data is tied to the device and to the site address, so changing the address starts a fresh log. On iOS, add the app to the home screen so Safari doesn't clear site storage after a week of not opening it. Use Settings → Export CSV for backups.
 
@@ -326,7 +335,7 @@ Data is tied to the device and to the site address, so changing the address star
 The camera needs HTTPS, except on `localhost`.
 
 - **Live:** https://anyfield.web.app, on Firebase Hosting (project `home24-studio`, site `anyfield`). On iPhone or iPad, open it in Safari, tap Share → Add to Home Screen.
-- **Deploy:** `firebase deploy --only hosting --project home24-studio`. The `site` key in `firebase.json` targets `anyfield`. Google Cloud Shell has the CLI already signed in.
+- **Deploy:** automatic. Every push to `main` that changes `public/`, `firebase.json` or the workflow runs `.github/workflows/deploy.yml`: the tests, then `firebase deploy --only hosting`, then a check of the live page. It signs in to Google Cloud with Workload Identity Federation, so no key is stored: the `github-deploy` service account has Hosting-only roles, and only runs from `wintokk/home24-studio` on `main` can use it. `scripts/setup-auto-deploy.sh` created this once (run in Cloud Shell). To deploy by hand: `firebase deploy --only hosting --project home24-studio`.
 - **Local:**
 
 ```sh
@@ -338,9 +347,11 @@ python3 -m http.server 8000 --directory public    # desktop: http://localhost:80
 ```sh
 node test/logic.test.js                      # 47 checks
 node test/logic.test.js path/to/index.html   # run the same checks against another copy of the app
-node test/replay.js anyfield-tracking.json   # replay a real set through the current counter (--frames for every frame)
+node test/replay.js countlog.json            # replay every logged set through the current counter
+node test/replay.js countlog.json --set 3    # one set, frame by frame where anything happened (--frames for all)
+node scripts/pull-countlog.js <email> > countlog.json   # in Cloud Shell: download a user's backed-up count log
 ```
 
 The tests generate push-up timelines (holds, reps of chosen depth and speed, pauses, bounces, nods, shuffles, landmark glitches, sags, wobble, tracking gaps). They turn each into per-signal values as a side camera and a floor-in-front camera would see them, with tracking noise, then run them through `Calibrator` and `RepCounter`. The failure-modes table above lists which check covers which behaviour.
 
-**Tracking data from a real set.** The app keeps the numbers from your last set (no video): per frame, the time, the raw value of the chosen signal, progress, counter state, reps, events and all six signals. Settings → Tracking data → Share sends it as `anyfield-tracking-YYYY-MM-DD-HHMM.json`. `test/replay.js` runs those frames through the current `RepCounter` and prints both counts and the time between counts, so a miscount on the phone can be reproduced and turned into a test.
+**Real sets.** `test/replay.js` reads a count log (see App → Count log) and runs every set's frames through the current `RepCounter`. Per set it prints what the phone counted, what was saved, and what this version counts, and it exits non-zero when this version disagrees with a saved count. A miscount on the phone becomes a reproducible case: fix the counter until the replay matches what you saved, and check that the other logged sets still match. With `--set N` it prints each frame where something happened, with the video time, so it lines up with the count track in the player.

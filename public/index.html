@@ -211,6 +211,12 @@ h1,h2,h3,p{margin:0}
 .pill.rec .dot{background:var(--bad);color:var(--bad);animation:blink 1.2s steps(2,start) infinite}
 @keyframes blink{to{visibility:hidden}}
 .player{display:block;width:100%;max-height:min(62vh,560px);border-radius:20px;background:#000;object-fit:contain}
+.pwrap{position:relative}
+.pcount{position:absolute;top:10px;left:10px;min-width:44px;padding:4px 12px;border-radius:14px;background:rgba(11,18,13,.72);color:var(--ink);font:700 22px/1.2 var(--ui);font-variant-numeric:tabular-nums;text-align:center;pointer-events:none;transition:background .2s,color .2s}
+.pcount.hit{background:var(--accent);color:#0B120D}
+.ctrack{margin-top:10px}
+.ctrack canvas{display:block;width:100%;height:72px;border-radius:12px;background:rgba(238,242,228,.05);touch-action:manipulation;cursor:pointer}
+.ctrack .hint{margin-top:6px}
 .usage{height:6px;border-radius:3px;background:rgba(238,242,228,.08);overflow:hidden}
 .usage i{display:block;height:100%;width:0;background:var(--accent);border-radius:inherit}
 
@@ -260,6 +266,9 @@ h1,h2,h3,p{margin:0}
   padding:10px 20px 22px;
   transform:translateY(calc(100% + 30px));transition:transform .45s var(--spring)}
 .sheet.open{transform:none}
+/* sheets scroll, and an absolutely placed rim would scroll away with the content: draw it as an inset shadow instead */
+.sheet::before{display:none}
+.sheet.glass{box-shadow:inset 0 1.2px 0 rgba(255,255,255,.55),inset 0 0 0 1px rgba(238,246,226,.16),inset 0 -1px 1px rgba(255,255,255,.10),0 14px 34px -14px rgba(0,6,2,.85)}
 .sheet > *{position:relative;z-index:3}
 .grip{width:40px;height:5px;border-radius:3px;background:var(--ink-4);margin:0 auto 10px}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
@@ -605,7 +614,12 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     <div class="usage" id="vidUsage" hidden><i></i></div>
     <p class="hint" id="vidHint"></p>
     <button class="link danger" id="vidClear" type="button" style="align-self:flex-start" hidden>Delete all videos</button></div>
-  <div class="row" id="traceRow" hidden><div style="min-width:0"><span class="lbl">Tracking data</span><p class="hint" id="traceHint"></p></div><button class="btn plain press" id="traceShare" type="button" style="width:auto;height:44px;flex:none">Share</button></div>
+  <div class="row col"><span class="lbl" id="clogLbl">Count log</span>
+    <div class="seg" role="radiogroup" aria-labelledby="clogLbl">
+      <label><input type="radio" name="clog" value="on"><span>Last 20 sets</span></label>
+      <label><input type="radio" name="clog" value="off"><span>Off</span></label></div>
+    <p class="hint" id="clogHint"></p>
+    <button class="btn plain press" id="clogShare" type="button" style="align-self:flex-start;width:auto;height:42px" hidden>Share log</button></div>
   <div class="row"><span class="lbl">Your log</span><button class="btn plain press" id="exportBtn" type="button" style="width:auto;height:42px">Export CSV</button></div>
   <p class="hint" id="storeHint">Your log and setups are stored on this device only.</p>
 </div>
@@ -661,7 +675,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 <div class="sheet glass" id="videoSheet" role="dialog" aria-modal="true" aria-labelledby="videoTitle" hidden>
   <div class="grip"></div>
   <div class="sheet-head"><h2 id="videoTitle">Set video</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-  <video class="player" id="player" controls playsinline preload="metadata"></video>
+  <div class="pwrap"><video class="player" id="player" controls playsinline preload="metadata"></video><span class="pcount" id="pcount" hidden></span></div>
+  <div class="ctrack" id="ctrack" hidden><canvas id="ctrackCv" aria-label="Counter track: body position over time, with a mark at each count"></canvas><p class="hint" id="ctrackHint"></p></div>
   <div class="btn-row"><button class="glass prime btn press" id="videoShare" type="button">Save to Photos</button>
     <button class="link danger" id="videoDelete" type="button" style="align-self:center">Delete video</button></div>
 </div>
@@ -969,7 +984,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 
   /* ---------- storage ---------- */
   var KEY = 'pushStudio.v1';
-  var DEFAULTS = { setups: [], active: null, goal: 50, depth: 0.7, sound: 'voice', model: 'lite', log: {}, goalCheered: null, videoCap: 0, videos: {} };
+  var DEFAULTS = { setups: [], active: null, goal: 50, depth: 0.7, sound: 'voice', model: 'lite', log: {}, goalCheered: null, videoCap: 0, videos: {}, countLog: true, clog: {} };
   var S = load();
   function load() {
     var base = JSON.parse(JSON.stringify(DEFAULTS));
@@ -1009,7 +1024,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   }
   /* ---------- set videos: recorded on this device only, capped, oldest deleted first ---------- */
   var Vid = (function () {
-    var DB = 'anyfield-video', ST = 'clips', dbp = null, rec = null, chunks = [], bytes = 0, started = 0, recType = '';
+    var DB = 'anyfield-video', ST = 'clips', dbp = null, rec = null, chunks = [], bytes = 0, started = 0, startedPerf = 0, recType = '';
     function db() {
       if (!dbp) dbp = new Promise(function (res, rej) {
         var r = indexedDB.open(DB, 1);
@@ -1045,7 +1060,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
         chunks.push(e.data); bytes += e.data.size;
         if (bytes > capBytes() * 0.9 && rec && rec.state === 'recording') { rec.stop(); toast('Video stopped: it reached your storage limit'); }
       };
-      try { rec.start(1000); } catch (e) { warn(e); rec = null; return false; }
+      try { rec.start(1000); startedPerf = performance.now(); } catch (e) { warn(e); rec = null; return false; }
       $('#recPill').hidden = false;
       return true;
     }
@@ -1086,7 +1101,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       S.videos = {}; save(); renderHome();
     }
     function get(t) { return op('readonly', function (st) { return st.get(Number(t)); }); }
-    return { supported: supported, start: start, stop: stop, keep: keep, remove: remove, clear: clear, get: get, trim: trim, used: used, recording: function () { return !!rec; } };
+    return { supported: supported, start: start, stop: stop, keep: keep, remove: remove, clear: clear, get: get, trim: trim, used: used, recording: function () { return !!rec; }, startedAt: function () { return startedPerf; } };
   })();
   function fmtDur(sec) { sec = Math.max(0, sec | 0); return Math.floor(sec / 60) + ':' + pad(sec % 60); }
   function fmtMB(b) { return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB'; }
@@ -1533,8 +1548,73 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     $('#videoShare').textContent = canShare ? 'Save to Photos' : 'Download';
     var dl = $('#videoDelete'); dl.textContent = 'Delete video'; dl.dataset.armed = '';
     openSheet('videoSheet');
+    CLog.bySet(t).then(function (tr) { if (playing.t === t) showTrack(tr); });
   }
+  /* The counter's view of the set, in step with the video: progress over time (down is down),
+     the depth and back-at-top lines, a mark at each count, and the count so far on the video. */
+  var trk = null;
+  function showTrack(tr) {
+    hideTrack();
+    if (!tr || tr.videoAt == null || !tr.frames || !tr.frames.length) return;
+    var pts = [], reps = [], cues = [], depth = tr.depth || 0.7, up = Math.min(0.3, depth - 0.2);
+    tr.frames.forEach(function (f) {
+      var s = (f[0] - tr.videoAt) / 1000; if (s < 0) return;
+      pts.push([s, f[2]]);
+      var ev = f[5] ? f[5].split('|') : [];
+      if (ev.indexOf('rep') >= 0) reps.push([s, f[4]]);
+      if (ev.indexOf('shallow') >= 0 || ev.indexOf('nocount') >= 0) cues.push(s);
+    });
+    if (!pts.length) return;
+    trk = { pts: pts, reps: reps, cues: cues, depth: depth, up: up, end: pts[pts.length - 1][0], raf: 0, shown: -1 };
+    var h = 'Counted ' + tr.counted;
+    if (tr.status === 'saved' && tr.saved != null && tr.saved !== tr.counted)
+      h += ', you saved ' + tr.saved + ': ' + Math.abs(tr.counted - tr.saved) + (tr.counted > tr.saved ? ' extra' : ' missed');
+    $('#ctrackHint').textContent = h + '. Each mark is a count. Tap the track to jump there.';
+    $('#ctrack').hidden = false; $('#pcount').hidden = false;
+    drawTrack();
+  }
+  function hideTrack() {
+    if (trk) cancelAnimationFrame(trk.raf);
+    trk = null; $('#ctrack').hidden = true; $('#pcount').hidden = true;
+  }
+  function trackDur() { var d = $('#player').duration; return Math.max(trk.end, isFinite(d) ? d : 0) || 1; }
+  function drawTrack() {
+    if (!trk) return;
+    var cv = $('#ctrackCv'), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    if (!W) return;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    var c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+    var css = getComputedStyle(document.documentElement), col = function (n) { return css.getPropertyValue(n).trim(); };
+    var dur = trackDur(), P0 = -0.25, P1 = 1.35, top = 14, bh = H - top - 4;
+    var X = function (s) { return s / dur * W; }, Y = function (p) { return top + (Math.max(P0, Math.min(P1, p)) - P0) / (P1 - P0) * bh; };
+    c.lineWidth = 1; c.setLineDash([3, 3]); c.strokeStyle = col('--ink-4') || 'rgba(238,242,228,.25)';
+    [trk.up, trk.depth].forEach(function (p) { c.beginPath(); c.moveTo(0, Y(p)); c.lineTo(W, Y(p)); c.stroke(); });
+    c.setLineDash([]);
+    c.strokeStyle = col('--accent'); c.globalAlpha = 0.35;
+    trk.reps.forEach(function (r) { c.beginPath(); c.moveTo(X(r[0]), top); c.lineTo(X(r[0]), H); c.stroke(); });
+    c.globalAlpha = 1; c.lineWidth = 1.6; c.strokeStyle = col('--ink'); c.beginPath();
+    var pen = false;
+    trk.pts.forEach(function (q) { if (q[1] == null) { pen = false; return; } if (pen) c.lineTo(X(q[0]), Y(q[1])); else { c.moveTo(X(q[0]), Y(q[1])); pen = true; } });
+    c.stroke();
+    c.fillStyle = col('--warn');
+    trk.cues.forEach(function (s) { c.beginPath(); c.arc(X(s), H - 6, 2.5, 0, 6.3); c.fill(); });
+    c.fillStyle = col('--accent-hi'); c.font = '600 10px ' + col('--ui'); c.textAlign = 'center';
+    var lastX = -99; trk.reps.forEach(function (r) { var x = X(r[0]); if (x - lastX < 14) return; c.fillText(r[1], Math.min(W - 6, Math.max(6, x)), 10); lastX = x; });
+    var now = $('#player').currentTime || 0;
+    c.fillStyle = col('--accent-hi'); c.fillRect(X(now) - 1, top - 2, 2, H - top + 2);
+    var n = 0; for (var i = 0; i < trk.reps.length && trk.reps[i][0] <= now; i++) n = trk.reps[i][1];
+    var pc = $('#pcount');
+    if (n !== trk.shown) { pc.textContent = n; if (trk.shown >= 0 && n > trk.shown) { pc.classList.add('hit'); setTimeout(function () { pc.classList.remove('hit'); }, 350); } trk.shown = n; }
+  }
+  function trackLoop() { if (!trk) return; drawTrack(); if (!$('#player').paused) trk.raf = requestAnimationFrame(trackLoop); }
+  ['play', 'seeked', 'timeupdate', 'loadedmetadata', 'durationchange'].forEach(function (e) { $('#player').addEventListener(e, function () { if (trk) { cancelAnimationFrame(trk.raf); trackLoop(); } }); });
+  $('#ctrackCv').addEventListener('click', function (e) {
+    if (!trk) return; var r = this.getBoundingClientRect(), pl = $('#player');
+    pl.currentTime = Math.max(0, (e.clientX - r.left) / r.width * trackDur() - 1); drawTrack();
+  });
+  window.addEventListener('resize', function () { if (trk) drawTrack(); });
   function closePlayer() {
+    hideTrack();
     var pl = $('#player'); try { pl.pause(); } catch (e) {}
     pl.removeAttribute('src'); try { pl.load(); } catch (e) {}
     if (playing.url) URL.revokeObjectURL(playing.url);
@@ -1879,14 +1959,82 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var ok = await startStage(sesStage, function (t, k) { if (t) setStatus(t, k === 'err' ? 'err' : 'wait'); });
     if (ok) setStatus('Get into the top position and hold still', 'wait');
   }
-  /* ---------- tracking data from the last set, for diagnosing miscounts (numbers only, no video) ---------- */
-  var sesTrace = null, lastTrace = null;
-  try { lastTrace = JSON.parse(localStorage.getItem('anyfield.trace') || 'null'); } catch (e) {}
+  /* ---------- count log: the counter's tracking numbers for the last 20 sets (no video), with the
+     count you saved as ground truth, so extra and missed counts can be found and replayed ---------- */
+  var CLog = (function () {
+    var DB = 'anyfield-log', ST = 'sets', KEEP = 20, dbp = null;
+    function db() {
+      if (!dbp) dbp = new Promise(function (res, rej) {
+        var r = indexedDB.open(DB, 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore(ST, { keyPath: 'start' }); };
+        r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+      });
+      return dbp;
+    }
+    function op(mode, fn) {
+      return db().then(function (d) { return new Promise(function (res, rej) {
+        var x = d.transaction(ST, mode), q = fn(x.objectStore(ST));
+        x.oncomplete = function () { res(q && q.result); }; x.onerror = x.onabort = function () { rej(x.error); };
+      }); });
+    }
+    function meta(tr) { return { counted: tr.counted, saved: tr.saved == null ? null : tr.saved, status: tr.status, setT: tr.setT || null, cloud: !!(S.clog[tr.start] && S.clog[tr.start].cloud) }; }
+    async function put(tr) {
+      if (!window.indexedDB) return;
+      try { await op('readwrite', function (st) { return st.put(tr); }); } catch (e) { warn(e); return; }
+      S.clog[tr.start] = meta(tr);
+      var keys = Object.keys(S.clog).map(Number).sort(function (a, b) { return a - b; });
+      while (keys.length > KEEP) await drop(keys.shift());
+      save();
+      if (tr.status !== 'pending') upload(tr);
+    }
+    async function drop(k) {
+      var m = S.clog[k]; delete S.clog[k];
+      try { await op('readwrite', function (st) { return st.delete(Number(k)); }); } catch (e) { warn(e); }
+      if (m && m.cloud && Cloud.on && fb) fb.FS.deleteDoc(fb.FS.doc(fb.db, 'users', Cloud.user.uid, 'countlog', String(k))).catch(warn);
+    }
+    async function gzip(str) {
+      if (!window.CompressionStream) return null;
+      var s = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+      return new Uint8Array(await new Response(s).arrayBuffer());
+    }
+    // Signed in: a gzipped copy goes to users/{uid}/countlog/{start}, readable only by you (and the project owner).
+    async function upload(tr) {
+      if (!Cloud.on || !fb || !S.countLog) return;
+      try {
+        var gz = await gzip(JSON.stringify(tr)); if (!gz || gz.length > 900000) return;
+        var ref = fb.FS.doc(fb.db, 'users', Cloud.user.uid, 'countlog', String(tr.start));
+        var w = fb.FS.setDoc(ref, { start: tr.start, counted: tr.counted, saved: tr.saved == null ? null : tr.saved, status: tr.status,
+          setT: tr.setT || null, signal: tr.setup.signal, frames: tr.frames.length, gz: fb.FS.Bytes.fromUint8Array(gz) });
+        if (S.clog[tr.start]) { S.clog[tr.start].cloud = true; save(); }
+        await w;
+      } catch (e) { warn(e); }
+    }
+    function get(k) { return op('readonly', function (st) { return st.get(Number(k)); }); }
+    function bySet(t) {
+      for (var k in S.clog) if (S.clog[k].setT === t) return get(k).catch(function () { return null; });
+      return Promise.resolve(null);
+    }
+    function all() { return op('readonly', function (st) { return st.getAll(); }).then(function (l) { return (l || []).sort(function (a, b) { return a.start - b.start; }); }); }
+    async function clear() { var keys = Object.keys(S.clog); for (var i = 0; i < keys.length; i++) await drop(keys[i]); save(); }
+    function summary() {
+      var n = 0, fixed = 0, extra = 0, missed = 0;
+      for (var k in S.clog) {
+        var m = S.clog[k]; n++;
+        if (m.status !== 'saved' || m.saved == null || m.saved === m.counted) continue;
+        fixed++; if (m.counted > m.saved) extra += m.counted - m.saved; else missed += m.saved - m.counted;
+      }
+      return { n: n, fixed: fixed, extra: extra, missed: missed };
+    }
+    return { put: put, get: get, bySet: bySet, all: all, clear: clear, summary: summary, KEEP: KEEP };
+  })();
+  try { localStorage.removeItem('anyfield.trace'); } catch (e) {}   // the earlier single-set log
+
+  var sesTrace = null, endedTrace = null;
   function r4(x) { return x == null || !isFinite(x) ? null : Math.round(x * 1e4) / 1e4; }
   function traceStart(st) {
-    sesTrace = { app: 'anyfield', format: 1, start: Date.now(), userAgent: navigator.userAgent, model: S.model, depth: depthVal(),
+    sesTrace = !S.countLog ? null : { app: 'anyfield', format: 2, start: Date.now(), userAgent: navigator.userAgent, model: S.model, depth: depthVal(),
       setup: { signal: st.signal, up: st.up, down: st.down, noise: st.noise, quality: st.quality, place: st.place },
-      columns: ['t_ms', 'signal', 'progress', 'state', 'reps', 'events', 'all_signals'], signals: L.KEYS, frames: [] };
+      columns: ['t_ms', 'signal', 'progress', 'state', 'reps', 'events', 'all_signals'], signals: L.KEYS, frames: [], videoAt: null };
   }
   function traceFrame(t, lm, W, H, v, evs) {
     if (!sesTrace || sesTrace.frames.length >= 9000) return;
@@ -1894,18 +2042,33 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     sesTrace.frames.push([Math.round(t), r4(v), r4(counter.p), counter.state, counter.reps, evs.join('|'),
       all ? L.KEYS.map(function (k) { return r4(all[k]); }) : null]);
   }
+  // At Finish: logged as pending, then labelled with what you saved (or discarded) in the review sheet.
   function traceEnd() {
+    endedTrace = null;
     if (!sesTrace || !counter) { sesTrace = null; return; }
-    sesTrace.reps = counter.reps; lastTrace = sesTrace; sesTrace = null;
-    try { localStorage.setItem('anyfield.trace', JSON.stringify(lastTrace)); } catch (e) {}
+    var tr = sesTrace; sesTrace = null;
+    tr.reps = tr.counted = counter.reps; tr.saved = null; tr.setT = null;
+    tr.status = counter.reps ? 'pending' : 'empty';
+    if (tr.status === 'empty' && tr.frames.length < 30) return;
+    if (tr.status === 'pending') endedTrace = tr;
+    CLog.put(tr);
   }
-  $('#traceShare').addEventListener('click', function () {
-    if (!lastTrace) return;
-    var d = new Date(lastTrace.start), name = 'anyfield-tracking-' + dkey(d) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
-    var f = new File([JSON.stringify(lastTrace)], name, { type: 'application/json' });
+  function traceLabel(status, saved, setT) {
+    var tr = endedTrace; endedTrace = null; if (!tr) return;
+    tr.status = status; tr.saved = saved; tr.setT = setT || null;
+    CLog.put(tr);
+  }
+  function shareFile(name, text) {
+    var f = new File([text], name, { type: 'application/json' });
     if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
     var url = URL.createObjectURL(f), a = document.createElement('a'); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+  $('#clogShare').addEventListener('click', async function () {
+    var sets; try { sets = await CLog.all(); } catch (e) { warn(e); toast('Couldn’t read the count log'); return; }
+    if (!sets.length) return;
+    var d = new Date();
+    shareFile('anyfield-countlog-' + dkey(d) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json', JSON.stringify({ app: 'anyfield', format: 2, sets: sets }));
   });
 
   function onSesPose(t, lm, W, H) {
@@ -1920,7 +2083,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       $('#repNum').style.setProperty('--p', Math.min(1, p).toFixed(3));
     }
     evs.forEach(function (e) {
-      if (e === 'armed') { setStatus('Tracking', 'live'); say('Go!'); if (S.videoCap && !Vid.recording() && sesStage.stream) Vid.start(sesStage.stream); }
+      if (e === 'armed') { setStatus('Tracking', 'live'); say('Go!'); if (S.videoCap && !Vid.recording() && sesStage.stream) Vid.start(sesStage.stream).then(function (ok) { if (ok && sesTrace) sesTrace.videoAt = Math.round(Vid.startedAt()); }); }
       else if (e === 'rep') {
         setRep(counter.reps, true); sesStage.flashAt = performance.now(); flash('go'); repSound(counter.reps);
         if (counter.state !== 'arming') setStatus('Tracking', 'live');
@@ -1956,10 +2119,11 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var clipP = pendingClip; pendingClip = null;
     if (n > 0) {
       var t = addSet(n, id, false); toast(n + ' push-ups saved');
+      traceLabel('saved', n, t);
       if (clipP) clipP.then(function (clip) { return Vid.keep(t, clip, n); });
-    } else renderHome();
+    } else { traceLabel('saved', 0, null); renderHome(); }
   });
-  $('#reviewDiscard').addEventListener('click', function () { counter = null; pendingClip = null; closeSheet(); show('home'); renderHome(); toast('Set discarded'); });
+  $('#reviewDiscard').addEventListener('click', function () { traceLabel('discarded', null, null); counter = null; pendingClip = null; closeSheet(); show('home'); renderHome(); toast('Set discarded'); });
   $$('[data-rev]').forEach(function (b) { b.addEventListener('click', function () { var i = $('#reviewInput'); i.value = Math.max(0, (parseInt(i.value, 10) || 0) + +b.dataset.rev); }); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
@@ -1987,9 +2151,24 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     $$('input[name=model]').forEach(function (r) { r.checked = r.value === S.model; });
     $$('input[name=vcap]').forEach(function (r) { r.checked = +r.value === (S.videoCap || 0); });
     renderVidUsage();
-    $('#traceRow').hidden = !lastTrace;
-    if (lastTrace) $('#traceHint').textContent = 'From your set at ' + fmtTime(lastTrace.start) + ' (' + lastTrace.reps + ' counted). Numbers only, no video. Send it if a count was wrong.';
+    renderClog();
   }
+  function renderClog() {
+    $$('input[name=clog]').forEach(function (r) { r.checked = (r.value === 'on') === !!S.countLog; });
+    var m = CLog.summary(), h;
+    if (!S.countLog) h = 'Off. Turn it on to keep the counter’s tracking numbers for each set, so miscounts can be found and fixed.';
+    else {
+      h = 'Keeps the counter’s tracking numbers (no video) for your last ' + CLog.KEEP + ' sets. When you fix a count after a set, the fix is logged too.';
+      if (m.n) h += ' ' + m.n + (m.n === 1 ? ' set' : ' sets') + ' logged' + (m.fixed ? ', ' + m.fixed + ' fixed: ' + m.extra + ' extra, ' + m.missed + ' missed.' : ', no fixes.');
+      if (Cloud.on) h += ' Backed up to your account.';
+    }
+    $('#clogHint').textContent = h;
+    $('#clogShare').hidden = !m.n;
+  }
+  $$('input[name=clog]').forEach(function (r) { r.addEventListener('change', function () {
+    S.countLog = r.value === 'on'; save();
+    if (!S.countLog) CLog.clear().then(renderClog); else renderClog();
+  }); });
   function renderVidUsage() {
     var n = Object.keys(S.videos).length, u = Vid.used(), cap = (S.videoCap || 0) * 1e6;
     var bar = $('#vidUsage'); bar.hidden = !cap; if (cap) bar.firstChild.style.width = Math.min(100, u / cap * 100) + '%';
@@ -2067,7 +2246,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   });
 
   // Test handle, only on a local dev server.
-  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__anyfield = { Vid: Vid, S: S, addSet: addSet, renderHome: renderHome, save: save };
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__anyfield = { Vid: Vid, S: S, addSet: addSet, renderHome: renderHome, save: save, CLog: CLog, openVideo: openVideo, syncSettings: syncSettings };
 
   renderHome();
   initCloud();
