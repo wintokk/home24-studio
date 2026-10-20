@@ -1,0 +1,1 @@
+2026-10-20 10:01:19.837 App[14151:47764] DiskCookieStorage changing policy from 2 to 0, cookie file: file:///Users/runner/Library/Developer/CoreSimulator/Devices/E952A9B0-CC78-435C-BF08-06AD47FE1076/data/Containers/Data/Application/B923D34B-1815-4BEC-8D4F-4C2959538DE4/Library/Cookies/app.anyfield.binarycookies
