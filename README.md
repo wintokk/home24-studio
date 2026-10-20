@@ -356,7 +356,7 @@ Both have **Settings → Delete account**, which deletes the Firestore data (set
 2. **Register the app:** Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs, bundle ID `app.anyfield`, with **Sign in with Apple** checked. Then in App Store Connect → Apps → **+** → New App, pick that bundle ID.
 3. **API key for CI:** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, with the App Manager role. Download the `.p8` file (it can be downloaded only once).
 4. **GitHub secrets** (repo → Settings → Secrets and variables → Actions): `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (the whole `.p8` file), and `APPLE_TEAM_ID` (developer account → Membership). The next push to `main` uploads a build.
-5. **Firebase:** the iOS app `app.anyfield` is registered in project `home24-studio`. Its `GoogleService-Info.plist` is in `ios/App/App`, and its `REVERSED_CLIENT_ID` is a URL scheme in `Info.plist`. The Apple provider is turned on in Firebase Authentication.
+5. **Firebase (done):** the iOS app `app.anyfield` is registered in project `home24-studio`. Its `GoogleService-Info.plist` is in `ios/App/App`, and its `REVERSED_CLIENT_ID` is a URL scheme in `Info.plist`. The Apple provider is turned on in Firebase Authentication.
 6. **TestFlight:** add an external testing group with a public link. The first build goes through Beta App Review. Put the link in `APP_LINK` in `public/index.html` and the website shows **Get the app** on Apple devices. After App Store release, change `APP_LINK` to the App Store link.
 
 ## Run
