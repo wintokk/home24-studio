@@ -1,0 +1,128 @@
+name: iOS
+
+# simulator: builds the app for the iOS Simulator (no signing), launches it and saves a screenshot
+#            and the app log as an artifact. Runs on every push that touches the app.
+# testflight: archives, signs and uploads to TestFlight. Runs only when the App Store Connect
+#            secrets below exist (see README → iOS app), on pushes to main and on manual runs.
+#   secrets: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (contents of the AuthKey_XXXX.p8 file)
+#   variables or secrets: APPLE_TEAM_ID
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'ios/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/build-app-www.js'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Counting logic
+        run: node test/logic.test.js
+      - name: App bundle (web + local MediaPipe, models, Firebase, font)
+        run: node scripts/build-app-www.js
+      - run: npx cap sync ios
+      - name: Pick the newest Xcode
+        run: |
+          X=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1); sudo xcode-select -s "$X"; xcodebuild -version
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+          key: spm-${{ hashFiles('ios/App/CapApp-SPM/Package.swift', 'package-lock.json') }}
+      - name: Build for the Simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -40
+          test -d build/Build/Products/Debug-iphonesimulator/App.app
+      - name: Launch and screenshot
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print([x['udid'] for k in sorted(d, reverse=True) if 'iOS' in k for x in d[k] if x['name'].startswith('iPhone')][0])")
+          xcrun simctl boot "$UDID"; xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/App.app
+          mkdir -p shots
+          xcrun simctl launch "$UDID" app.anyfield
+          sleep 25
+          xcrun simctl io "$UDID" screenshot shots/home.png
+          xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "App"' > shots/app-log.txt || true
+          grep -E "⚡️|\[error\]|\[warn\]|ERROR|Error" shots/app-log.txt | tail -60 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator
+          path: shots/
+
+  testflight:
+    needs: simulator
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 50
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      TEAM_ID: ${{ vars.APPLE_TEAM_ID || secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Check for App Store Connect secrets
+        id: gate
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ] && [ -n "$TEAM_ID" ]; then echo "go=1" >> "$GITHUB_OUTPUT"
+          else echo "::notice::TestFlight upload skipped: add ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 and APPLE_TEAM_ID to the repo to turn it on."; fi
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.go
+      - uses: actions/setup-node@v5
+        if: steps.gate.outputs.go
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.gate.outputs.go
+        run: npm ci && node scripts/build-app-www.js && npx cap sync ios
+      - name: Pick the newest Xcode
+        if: steps.gate.outputs.go
+        run: |
+          X=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1); sudo xcode-select -s "$X"; xcodebuild -version
+      - name: Archive and upload
+        if: steps.gate.outputs.go
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"; printf '%s' "$ASC_KEY_P8" > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          BUILD=$((1000 + GITHUB_RUN_NUMBER))
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CURRENT_PROJECT_VERSION="$BUILD" "${AUTH[@]}" archive | tail -40
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
+            -exportPath "$RUNNER_TEMP/export" "${AUTH[@]}" | tail -40
+          echo "::notice::Uploaded build $BUILD to App Store Connect; it shows in TestFlight after processing."
+          rm -f "$KEY"

@@ -1,0 +1,34 @@
+{
+  "appId": "app.anyfield",
+  "appName": "Anyfield",
+  "webDir": "app-www",
+  "backgroundColor": "#0B120D",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0B120D",
+    "scheme": "Anyfield"
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com", "apple.com"]
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "overlaysWebView": true
+    }
+  },
+  "experimental": {
+    "ios": {
+      "spm": {
+        "swiftToolsVersion": "6.1",
+        "packageOptions": {
+          "@capacitor-firebase/authentication": { "symlink": true }
+        },
+        "packageTraits": {
+          "@capacitor-firebase/authentication": ["Google"]
+        }
+      }
+    }
+  }
+}

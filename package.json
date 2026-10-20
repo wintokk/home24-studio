@@ -1,0 +1,24 @@
+{
+  "name": "anyfield",
+  "private": true,
+  "description": "Anyfield: the web app in public/ and its iOS app (Capacitor) in ios/",
+  "scripts": {
+    "test": "node test/logic.test.js",
+    "app:www": "node scripts/build-app-www.js",
+    "app:sync": "node scripts/build-app-www.js && cap sync ios"
+  },
+  "devDependencies": {
+    "@capacitor-community/keep-awake": "^8.0.1",
+    "@capacitor-firebase/authentication": "^8.5.2",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/status-bar": "^8.0.4",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@mediapipe/tasks-vision": "0.10.14",
+    "firebase": "12.19.0"
+  }
+}

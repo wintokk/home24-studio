@@ -143,6 +143,11 @@ h1,h2,h3,p{margin:0}
 .brand{font-family:var(--display);font-stretch:112%;font-weight:800;font-size:20px;letter-spacing:-.01em;line-height:1.1}
 .top-date{color:var(--ink-3);font-size:14px;margin-top:3px}
 .acct{width:44px;height:44px;border-radius:22px;overflow:hidden;flex:none}
+.top-right{display:flex;align-items:center;gap:10px;flex:none}
+.getapp{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 15px 0 13px;border-radius:20px;font-size:15px;font-weight:650;color:var(--ink);text-decoration:none;white-space:nowrap}
+.getapp svg{width:15px;height:18px;margin-top:-2px;color:var(--accent-hi)}
+.top-date{white-space:nowrap}
+@media (max-width:359px){.ga-the{display:none}.getapp{padding:0 12px 0 11px;gap:6px}.top-right{gap:8px}}
 .acct svg{width:22px;height:22px}
 .face{width:36px;height:36px;border-radius:18px;overflow:hidden;display:grid;place-items:center;flex:none;
   background:linear-gradient(160deg,rgba(180,219,98,.55),rgba(78,110,58,.7));font-weight:700;font-size:15px;color:var(--ink)}
@@ -248,6 +253,8 @@ h1,h2,h3,p{margin:0}
 .rank .num{font-family:var(--display);font-stretch:104%;font-weight:750;font-size:22px;line-height:1;font-variant-numeric:tabular-nums}
 .btn.google{background:rgba(255,255,255,.94);color:#1F1F1F;font-weight:600}
 .btn.google svg{width:20px;height:20px}
+.btn.apple{background:#fff;color:#000;font-weight:600}
+.btn.apple svg{width:17px;height:20px;margin-top:-2px}
 .cta-row{display:flex;gap:10px;flex-wrap:wrap}
 .cta-row .btn{width:auto;flex:1 1 180px}
 .linkbox{display:flex;gap:8px;align-items:center;background:rgba(238,242,228,.08);border-radius:16px;padding:6px 6px 6px 14px}
@@ -436,7 +443,10 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 <main id="home" class="screen home">
   <header class="top">
     <div><h1 class="brand">Anyfield</h1><p class="top-date" id="todayDate"></p></div>
-    <button class="glass round press acct" id="acctBtn" type="button" aria-label="Account" hidden></button>
+    <div class="top-right">
+      <a class="glass getapp press" id="getApp" href="#" target="_blank" rel="noopener" hidden><svg viewBox="0 0 17 20" aria-hidden="true"><path fill="currentColor" d="M14.06 10.62c-.02-2.13 1.74-3.15 1.82-3.2-.99-1.45-2.54-1.65-3.09-1.67-1.31-.13-2.57.78-3.23.78-.67 0-1.69-.76-2.78-.74-1.43.02-2.75.83-3.48 2.11-1.49 2.58-.38 6.39 1.07 8.48.71 1.02 1.55 2.17 2.65 2.13 1.07-.04 1.47-.69 2.76-.69 1.29 0 1.65.69 2.78.67 1.15-.02 1.87-1.04 2.57-2.07.81-1.18 1.14-2.33 1.16-2.39-.03-.01-2.22-.85-2.24-3.4zM11.95 4.36c.59-.71.98-1.7.87-2.69-.84.03-1.86.56-2.47 1.27-.54.63-1.02 1.64-.89 2.61.94.07 1.9-.48 2.49-1.19z"/></svg>Get <span class="ga-the">the </span>app</a>
+      <button class="glass round press acct" id="acctBtn" type="button" aria-label="Account" hidden></button>
+    </div>
   </header>
 
   <section class="hero" id="hero" aria-label="Today">
@@ -589,7 +599,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
 <div class="sheet glass" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
   <div class="grip"></div>
   <div class="sheet-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-  <div class="row" id="acctRow" hidden style="flex-wrap:wrap"><div style="min-width:0;flex:1 1 200px"><span class="lbl" id="acctName"></span><p class="hint" id="acctSub"></p></div><button class="btn plain press" id="acctToggle" type="button" style="width:auto;height:44px;flex:none"></button></div>
+  <div class="row" id="acctRow" hidden style="flex-wrap:wrap"><div style="min-width:0;flex:1 1 200px"><span class="lbl" id="acctName"></span><p class="hint" id="acctSub"></p></div><button class="btn plain press" id="acctToggle" type="button" style="width:auto;height:44px;flex:none"></button>
+    <button class="link danger" id="acctDelete" type="button" style="flex-basis:100%;text-align:left" hidden>Delete account</button></div>
   <div class="row"><label for="goalInput">Daily goal</label>
     <div class="stepper"><button type="button" data-goal="-5" aria-label="5 fewer">−</button><input id="goalInput" type="number" inputmode="numeric" min="1" max="2000"><button type="button" data-goal="5" aria-label="5 more">+</button></div></div>
   <div class="row col"><label for="depthInput">How deep a rep must go <output id="depthOut" for="depthInput"></output></label>
@@ -670,6 +681,16 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   <div class="sheet-head"><h2 id="joinTitle">Join a group</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <p class="lede" id="joinText" style="margin-bottom:6px"></p>
   <div class="btn-row" id="joinBtns"></div>
+</div>
+
+<div class="sheet glass" id="signinSheet" role="dialog" aria-modal="true" aria-labelledby="signinTitle" hidden>
+  <div class="grip"></div>
+  <div class="sheet-head"><h2 id="signinTitle">Sign in</h2><button class="icon-btn" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <p class="hint">Sync your log across devices and join a group leaderboard. Counting works without an account.</p>
+  <div class="btn-row">
+    <button class="btn apple press" id="signinApple" type="button"><svg viewBox="0 0 17 20" aria-hidden="true"><path fill="currentColor" d="M14.06 10.62c-.02-2.13 1.74-3.15 1.82-3.2-.99-1.45-2.54-1.65-3.09-1.67-1.31-.13-2.57.78-3.23.78-.67 0-1.69-.76-2.78-.74-1.43.02-2.75.83-3.48 2.11-1.49 2.58-.38 6.39 1.07 8.48.71 1.02 1.55 2.17 2.65 2.13 1.07-.04 1.47-.69 2.76-.69 1.29 0 1.65.69 2.78.67 1.15-.02 1.87-1.04 2.57-2.07.81-1.18 1.14-2.33 1.16-2.39-.03-.01-2.22-.85-2.24-3.4zM11.95 4.36c.59-.71.98-1.7.87-2.69-.84.03-1.86.56-2.47 1.27-.54.63-1.02 1.64-.89 2.61.94.07 1.9-.48 2.49-1.19z"/></svg>Continue with Apple</button>
+    <button class="btn google press" id="signinGoogle" type="button"></button>
+  </div>
 </div>
 
 <div class="sheet glass" id="videoSheet" role="dialog" aria-modal="true" aria-labelledby="videoTitle" hidden>
@@ -969,13 +990,22 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 
+  // In the iOS app (Capacitor) everything loads from the app bundle (scripts/build-app-www.js), so it works offline.
+  var NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  var Plug = NATIVE ? (window.Capacitor.Plugins || {}) : {};
+  var WEB_URL = 'https://anyfield.web.app/';
+  // The iOS app: the TestFlight public link until it's on the App Store, then the App Store link.
+  // Empty hides "Get the app". Shown on Apple devices only, and never inside the app.
+  var APP_LINK = '';
+  var local = function (p) { return new URL(p, location.href).href; };
   var MP_VER = '0.10.14';
-  var MP_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VER + '/vision_bundle.mjs';
-  var MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VER + '/wasm';
-  var MODELS = {
+  var MP_URL = NATIVE ? local('vendor/mediapipe/vision_bundle.mjs') : 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VER + '/vision_bundle.mjs';
+  var MP_WASM = NATIVE ? local('vendor/mediapipe/wasm') : 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@' + MP_VER + '/wasm';
+  var MODELS = NATIVE ? { lite: local('vendor/models/pose_landmarker_lite.task'), full: local('vendor/models/pose_landmarker_full.task') } : {
     lite: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
     full: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'
   };
+  if (NATIVE) document.documentElement.classList.add('native');
   var PLACES = {
     front:  { label: 'Floor, in front',   hint: 'Lay the phone on the floor about a forearm past where your hands go, propped so the screen tilts up at your face.' },
     side:   { label: 'Floor, to the side', hint: 'Stand the phone up 1.5 to 2 m to your side, turned sideways if it fits better, so it sees you from head to feet.' },
@@ -1123,13 +1153,13 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   }
 
   /* ---------- Firebase: Google sign-in, Firestore sync, group leaderboards ---------- */
-  var FB_URL = 'https://www.gstatic.com/firebasejs/12.19.0/';
+  var FB_URL = NATIVE ? local('vendor/firebase/') : 'https://www.gstatic.com/firebasejs/12.19.0/';
   var fb = null;
   function warn(e) { try { console.warn('[anyfield]', e && (e.code || e.message) || e); } catch (x) {} }
   function syncFail(e) { warn(e); toast(e && e.code === 'permission-denied' ? 'The server refused that change' : 'That change didn’t sync. It will retry when you’re online.'); }
   function userRef() { return fb.FS.doc(fb.db, 'users', Cloud.user.uid); }
   async function cloudConfig() {
-    try {
+    if (!NATIVE) try {
       var r = await fetch('/__/firebase/init.json', { cache: 'no-store' });
       if (r.ok) { var c = await r.json(); if (c && c.apiKey) { c.authDomain = location.host; return c; } }
     } catch (e) {}
@@ -1142,10 +1172,13 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       var A = m[0], AU = m[1], FS = m[2], app = A.initializeApp(cfg), db;
       try { db = FS.initializeFirestore(app, { localCache: FS.persistentLocalCache({ tabManager: FS.persistentMultipleTabManager() }) }); }
       catch (e) { db = FS.getFirestore(app); }
-      fb = { app: app, auth: AU.getAuth(app), db: db, AU: AU, FS: FS };
+      // In the app there are no popups or redirects: sign-in happens natively (nativeSignIn), and the
+      // session is kept in IndexedDB.
+      var auth = NATIVE ? AU.initializeAuth(app, { persistence: AU.indexedDBLocalPersistence }) : AU.getAuth(app);
+      fb = { app: app, auth: auth, db: db, AU: AU, FS: FS };
     } catch (e) { warn(e); return; }
     renderAccount(); renderBoard();
-    fb.AU.getRedirectResult(fb.auth).catch(function (e) { var m = authError(e); if (m) toast(m); });
+    if (!NATIVE) fb.AU.getRedirectResult(fb.auth).catch(function (e) { var m = authError(e); if (m) toast(m); });
     fb.AU.onAuthStateChanged(fb.auth, function (u) { if (u) startCloud(u); else stopCloud(); });
     if (pendingJoin() && !fb.auth.currentUser) setTimeout(function () { if (!Cloud.on) showJoinSignIn(); }, 1500);
   }
@@ -1157,8 +1190,13 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     if (c === 'auth/network-request-failed') return 'No connection. Try signing in again when you’re online.';
     return 'Sign-in didn’t finish. Try again.';
   }
+  var SIGN_IN = NATIVE ? 'Sign in' : 'Sign in with Google';
   async function signIn() {
     if (!fb) { toast('Sign-in isn’t set up for this copy of the app'); return; }
+    if (NATIVE) {
+      var g = $('#signinGoogle'); if (!g.firstChild) { g.innerHTML = GOOGLE_G; g.appendChild(document.createTextNode('Continue with Google')); }
+      openSheet('signinSheet'); return;
+    }
     var p = new fb.AU.GoogleAuthProvider(); p.setCustomParameters({ prompt: 'select_account' });
     // Redirect only works in Safari when the auth handler is on this same origin (Firebase Hosting).
     // Home-screen apps can't run popups reliably, so they use redirect there; everything else uses a popup.
@@ -1169,12 +1207,86 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       var m = authError(e); if (m) toast(m);
     }
   }
-  function signOut() { if (fb) fb.AU.signOut(fb.auth).then(function () { toast('Signed out'); closeSheet(); }); }
+  // The app: Apple or Google signs in natively, then the same credential signs in Firebase's JS SDK here.
+  var pendingName = null;
+  async function nativeSignIn(provider) {
+    var FA = Plug.FirebaseAuthentication;
+    if (!FA || !fb) { toast('Sign-in isn’t available in this build'); return; }
+    var cred, r;
+    try {
+      if (provider === 'apple') {
+        r = await FA.signInWithApple({ skipNativeAuth: true });
+        cred = new fb.AU.OAuthProvider('apple.com').credential({ idToken: r.credential.idToken, rawNonce: r.credential.nonce });
+      } else {
+        r = await FA.signInWithGoogle({ skipNativeAuth: true });
+        cred = fb.AU.GoogleAuthProvider.credential(r.credential.idToken);
+      }
+    } catch (e) {
+      if (!/cancel/i.test((e && (e.message || e.code)) || '')) { warn(e); toast('Sign-in didn’t finish. Try again.'); }
+      return;
+    }
+    closeSheet();
+    pendingName = r.user && r.user.displayName || null;   // Apple sends the name only on the first sign-in
+    try {
+      var res = await fb.AU.signInWithCredential(fb.auth, cred);
+      if (pendingName && !res.user.displayName) fb.AU.updateProfile(res.user, { displayName: pendingName }).catch(warn);
+    } catch (e) { warn(e); var m = authError(e); if (m) toast(m); }
+  }
+  $('#signinApple').addEventListener('click', function () { nativeSignIn('apple'); });
+  $('#signinGoogle').addEventListener('click', function () { nativeSignIn('google'); });
+
+  /* Delete account (App Store 5.1.1(v)): your sets, days, setups, count log, group memberships and
+     scores, the profile, then the sign-in account. Deleting the account needs a recent sign-in. */
+  async function deleteAccount() {
+    var u = fb && fb.auth.currentUser; if (!u || !Cloud.on) return;
+    if (!navigator.onLine) { toast('Connect to the internet to delete your account'); return; }
+    var last = Date.parse(u.metadata.lastSignInTime || '') || 0;
+    if (Date.now() - last > 4 * 60 * 1000) {
+      S.pendingDelete = u.uid; save(); closeSheet(); signOut();
+      setTimeout(function () { toast('For security, sign in again to delete your account'); signIn(); }, 400);
+      return;
+    }
+    var FS = fb.FS, db = fb.db, uid = u.uid, uref = userRef();
+    closeSheet(); toast('Deleting your account…');
+    try {
+      var refs = [];
+      for (var i = 0, ids = myBoards(); i < ids.length; i++) {
+        var sq = await FS.getDocs(FS.query(FS.collection(db, 'boards', ids[i], 'scores'), FS.where('uid', '==', uid))).catch(function () { return { docs: [] }; });
+        sq.docs.forEach(function (d) { refs.push(d.ref); });
+        refs.push(FS.doc(db, 'boards', ids[i], 'members', uid));
+      }
+      var cols = ['sets', 'days', 'setups', 'countlog'];
+      for (var c = 0; c < cols.length; c++) (await FS.getDocs(FS.collection(uref, cols[c]))).docs.forEach(function (d) { refs.push(d.ref); });
+      for (var k = 0; k < refs.length; k += 400) { var b = FS.writeBatch(db); refs.slice(k, k + 400).forEach(function (r) { b.delete(r); }); await b.commit(); }
+      stopCloud(true);
+      await FS.deleteDoc(uref);
+      await u.delete();
+    } catch (e) {
+      warn(e);
+      toast(e && e.code === 'auth/requires-recent-login' ? 'Sign in again, then delete your account' : 'Couldn’t finish deleting. Try again.');
+      return;
+    }
+    if (Plug.FirebaseAuthentication) Plug.FirebaseAuthentication.signOut().catch(function () {});
+    S.clog = {}; S.board = null; save();
+    toast('Your account and its data are deleted');
+  }
+  function confirmDelete() {
+    $('#joinTitle').textContent = 'Delete your account?';
+    $('#joinText').textContent = 'This deletes your push-up log, setups, count log and group scores from the server, and the account itself. Videos on this phone stay until you delete them.';
+    joinButtons([['Delete account', 'danger', deleteAccount], ['Cancel', 'plain', function () { closeSheet(); }]]);
+    openSheet('joinSheet');
+  }
+  function signOut() {
+    if (!fb) return;
+    if (Plug.FirebaseAuthentication) Plug.FirebaseAuthentication.signOut().catch(function () {});
+    fb.AU.signOut(fb.auth).then(function () { toast('Signed out'); closeSheet(); });
+  }
 
   function startCloud(u) {
     stopCloud(true);
     var FS = fb.FS, db = fb.db;
-    Cloud.user = { uid: u.uid, name: (u.displayName || (u.email || 'Someone').split('@')[0]).slice(0, 60), photo: (u.photoURL || '').slice(0, 600) };
+    var mail = u.email && !/privaterelay\.appleid\.com$/i.test(u.email) ? u.email.split('@')[0] : '';
+    Cloud.user = { uid: u.uid, name: (u.displayName || pendingName || mail || 'Athlete').slice(0, 60), photo: (u.photoURL || '').slice(0, 600) };
     Cloud.on = true; Cloud.days = {}; Cloud.today = []; Cloud.setups = []; Cloud.profile = {}; Cloud.ready = false;
     var uref = userRef();
     FS.setDoc(uref, { name: Cloud.user.name, photo: Cloud.user.photo, seen: FS.serverTimestamp() }, { merge: true }).catch(warn);
@@ -1187,6 +1299,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
       renderHome(); if (openEl === $('#setupsSheet')) renderSetups(); }, warn));
     subToday();
     renderAccount(); renderBoard(); renderHome(); checkPendingJoin();
+    if (S.pendingDelete) { var pd = S.pendingDelete; S.pendingDelete = null; save(); if (pd === u.uid) setTimeout(confirmDelete, 600); }
   }
   function subToday() {
     if (Cloud.todayUnsub) Cloud.todayUnsub();
@@ -1308,7 +1421,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     if (S.board === bid) { S.board = null; save(); }
     b.commit().then(function () { toast('You left the group'); }).catch(syncFail);
   }
-  function inviteLink(bid) { return location.origin + location.pathname + '?join=' + bid; }
+  function inviteLink(bid) { return (NATIVE ? WEB_URL : location.origin + location.pathname) + '?join=' + bid; }
   function pendingJoin() { try { return sessionStorage.getItem('join'); } catch (e) { return null; } }
   function clearJoin() { try { sessionStorage.removeItem('join'); } catch (e) {} }
   (function readJoinParam() {
@@ -1320,8 +1433,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   })();
   function showJoinSignIn() {
     $('#joinTitle').textContent = 'Join a group';
-    $('#joinText').textContent = 'You opened an invite to a push-up group. Sign in with Google to join it.';
-    joinButtons([['Sign in with Google', 'google', signIn], ['Not now', 'plain', function () { clearJoin(); closeSheet(); }]]);
+    $('#joinText').textContent = 'You opened an invite to a push-up group. Sign in to join it.';
+    joinButtons([[SIGN_IN, NATIVE ? 'prime' : 'google', signIn], ['Not now', 'plain', function () { clearJoin(); closeSheet(); }]]);
     openSheet('joinSheet');
   }
   function checkPendingJoin() {
@@ -1340,7 +1453,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var box = $('#joinBtns'); box.innerHTML = '';
     list.forEach(function (it) {
       var b = document.createElement('button'); b.type = 'button';
-      b.className = it[1] === 'prime' ? 'glass prime btn press' : it[1] === 'google' ? 'btn google press' : 'btn plain press';
+      b.className = it[1] === 'prime' ? 'glass prime btn press' : it[1] === 'google' ? 'btn google press' : it[1] === 'danger' ? 'btn plain press danger' : 'btn plain press';
       if (it[1] === 'google') b.innerHTML = GOOGLE_G;
       b.appendChild(document.createTextNode(it[0])); b.addEventListener('click', it[2]); box.appendChild(b);
     });
@@ -1361,7 +1474,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     else { btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 19.5c1.4-3.2 4-4.8 7.2-4.8s5.8 1.6 7.2 4.8"/></svg>'; btn.setAttribute('aria-label', 'Sign in'); }
     $('#acctName').textContent = Cloud.on ? Cloud.user.name : 'Not signed in';
     $('#acctSub').textContent = Cloud.on ? 'Your log syncs to every device you sign in on.' : 'Sign in to sync your log across devices and join a group leaderboard.';
-    $('#acctToggle').textContent = Cloud.on ? 'Sign out' : 'Sign in with Google';
+    $('#acctToggle').textContent = Cloud.on ? 'Sign out' : SIGN_IN;
+    $('#acctDelete').hidden = !Cloud.on;
     $('#storeHint').textContent = Cloud.on ? 'Your log and setups are saved to your account. Groups only see daily totals.' : 'Your log and setups are stored on this device only.';
   }
   function renderBoard() {
@@ -1370,7 +1484,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     blk.hidden = false; body.innerHTML = ''; act.hidden = true; $('#boardTitle').textContent = 'Leaderboard';
     var p = function (text) { var e = document.createElement('p'); e.className = 'empty'; e.textContent = text; body.appendChild(e); };
     var button = function (label, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.className = cls; if (cls.indexOf('google') >= 0) b.innerHTML = GOOGLE_G; b.appendChild(document.createTextNode(label)); b.addEventListener('click', fn); body.appendChild(b); return b; };
-    if (!Cloud.on) { p('Sign in to sync your log across your iPhone and iPad and compete with friends.'); button('Sign in with Google', 'btn google press', signIn); return; }
+    if (!Cloud.on) { p('Sign in to sync your log across your iPhone and iPad and compete with friends.'); button(SIGN_IN, NATIVE ? 'glass prime btn press' : 'btn google press', signIn); return; }
     if (!Cloud.ready) { p('Loading your groups…'); return; }
     if (!Board.id) { p('Start a group and send the link to friends. Everyone sees daily totals; individual sets stay private.'); button('Start a group', 'glass btn press', openGroupSheet); return; }
     $('#boardTitle').textContent = Board.name || 'Group'; act.hidden = false;
@@ -1411,7 +1525,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     if (!Board.id) return;
     $('#inviteTitle').textContent = 'Invite to ' + (Board.name || 'the group');
     $('#inviteLink').value = inviteLink(Board.id);
-    $('#inviteShare').hidden = !navigator.share;
+    $('#inviteShare').hidden = !(navigator.share || Plug.Share);
     var lv = $('#groupLeave'); lv.textContent = 'Leave this group'; lv.dataset.armed = '';
     openSheet('inviteSheet');
   }
@@ -1436,9 +1550,11 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   function repSound(n) { if (S.sound === 'voice') say(String(n)); else if (S.sound === 'beep') beep(n % 10 === 0 ? 1320 : 880); }
   var wake = null;
   function keepAwake(on) {
+    if (Plug.KeepAwake) { (on ? Plug.KeepAwake.keepAwake() : Plug.KeepAwake.allowSleep()).catch(function () {}); return; }
     try { if (on) { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function (w) { wake = w; }).catch(function () {}); }
       else if (wake) { wake.release(); wake = null; } } catch (e) {}
   }
+  function tap(style) { if (Plug.Haptics) Plug.Haptics.impact({ style: style || 'MEDIUM' }).catch(function () {}); }
   function flash(kind) { var f = $('#flash'); f.className = 'flash'; void f.offsetWidth; f.className = 'flash ' + (kind || 'go'); }
 
   /* ---------- toast ---------- */
@@ -1543,8 +1659,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     var pl = $('#player'); pl.src = playing.url;
     var m = S.videos[t] || {};
     $('#videoTitle').textContent = (m.reps ? m.reps + ' push-ups, ' : '') + new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    var canShare = false;
-    try { canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([r.blob], 'a.mp4', { type: r.blob.type })] })); } catch (e) {}
+    var canShare = !!Plug.Share;
+    try { canShare = canShare || !!(navigator.canShare && navigator.canShare({ files: [new File([r.blob], 'a.mp4', { type: r.blob.type })] })); } catch (e) {}
     $('#videoShare').textContent = canShare ? 'Save to Photos' : 'Download';
     var dl = $('#videoDelete'); dl.textContent = 'Delete video'; dl.dataset.armed = '';
     openSheet('videoSheet');
@@ -1622,10 +1738,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   }
   function clipName(t, type) { var d = new Date(t); return 'anyfield-' + dkey(d) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + (/webm/.test(type) ? '.webm' : '.mp4'); }
   $('#videoShare').addEventListener('click', function () {
-    if (!playing.blob) return;
-    var f = new File([playing.blob], clipName(playing.t, playing.blob.type), { type: playing.blob.type });
-    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
-    var a = document.createElement('a'); a.href = playing.url; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    if (playing.blob) shareBlob(clipName(playing.t, playing.blob.type), playing.blob);
   });
   $('#videoDelete').addEventListener('click', function () {
     var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to delete'; return; }
@@ -2058,12 +2171,24 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     tr.status = status; tr.saved = saved; tr.setT = setT || null;
     CLog.put(tr);
   }
-  function shareFile(name, text) {
-    var f = new File([text], name, { type: 'application/json' });
+  function blobB64(blob) {
+    return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = function () { rej(r.error); }; r.readAsDataURL(blob); });
+  }
+  // The system share sheet (Save Video to Photos, Files, AirDrop…), or a download where there is none.
+  async function shareBlob(name, blob) {
+    if (Plug.Share && Plug.Filesystem) {
+      try {
+        var w = await Plug.Filesystem.writeFile({ path: name, data: await blobB64(blob), directory: 'CACHE' });
+        await Plug.Share.share({ files: [w.uri] });
+      } catch (e) { if (!/cancel/i.test(e && e.message || '')) { warn(e); toast('Couldn’t share that file'); } }
+      return;
+    }
+    var f = new File([blob], name, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(function () {}); return; }
     var url = URL.createObjectURL(f), a = document.createElement('a'); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
   }
+  function shareFile(name, text) { return shareBlob(name, new Blob([text], { type: 'application/json' })); }
   $('#clogShare').addEventListener('click', async function () {
     var sets; try { sets = await CLog.all(); } catch (e) { warn(e); toast('Couldn’t read the count log'); return; }
     if (!sets.length) return;
@@ -2085,10 +2210,10 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     evs.forEach(function (e) {
       if (e === 'armed') { setStatus('Tracking', 'live'); say('Go!'); if (S.videoCap && !Vid.recording() && sesStage.stream) Vid.start(sesStage.stream).then(function (ok) { if (ok && sesTrace) sesTrace.videoAt = Math.round(Vid.startedAt()); }); }
       else if (e === 'rep') {
-        setRep(counter.reps, true); sesStage.flashAt = performance.now(); flash('go'); repSound(counter.reps);
+        setRep(counter.reps, true); sesStage.flashAt = performance.now(); flash('go'); repSound(counter.reps); tap();
         if (counter.state !== 'arming') setStatus('Tracking', 'live');
         var total = sesBase + counter.reps;
-        if (total === goalVal() && S.goalCheered !== dkey()) { S.goalCheered = dkey(); save(); flash('goal'); setTimeout(function () { say('Daily goal done!'); }, 450); setStatus('Daily goal done', 'live', 3000); }
+        if (total === goalVal() && S.goalCheered !== dkey()) { S.goalCheered = dkey(); save(); flash('goal'); tap('HEAVY'); setTimeout(function () { say('Daily goal done!'); }, 450); setStatus('Daily goal done', 'live', 3000); }
       }
       else if (e === 'shallow') {
         setStatus('Go lower', 'warn', 1800);
@@ -2225,6 +2350,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   /* ---------- account + groups wiring ---------- */
   $('#acctBtn').addEventListener('click', function () { if (Cloud.on) { syncSettings(); openSheet('settingsSheet'); } else signIn(); });
   $('#acctToggle').addEventListener('click', function () { if (Cloud.on) signOut(); else { closeSheet(); signIn(); } });
+  $('#acctDelete').addEventListener('click', function () { closeSheet(); setTimeout(confirmDelete, 350); });
   $('#boardAction').addEventListener('click', openInvite);
   $('#groupCreate').addEventListener('click', function () {
     var n = $('#groupName').value.trim().slice(0, 40) || ((Cloud.user && Cloud.user.name.split(' ')[0]) || 'My') + '’s crew';
@@ -2238,7 +2364,8 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     catch (e) { inp.select(); }
   });
   $('#inviteShare').addEventListener('click', function () {
-    if (navigator.share) navigator.share({ title: 'Join ' + (Board.name || 'my push-up group'), text: 'Daily push-ups on Anyfield, counted by the phone camera. Join my group:', url: $('#inviteLink').value }).catch(function () {});
+    var msg = { title: 'Join ' + (Board.name || 'my push-up group'), text: 'Daily push-ups on Anyfield, counted by the phone camera. Join my group:', url: $('#inviteLink').value };
+    if (Plug.Share) Plug.Share.share(msg).catch(function () {}); else if (navigator.share) navigator.share(msg).catch(function () {});
   });
   $('#groupLeave').addEventListener('click', function () {
     var b = this; if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to leave'; return; }
@@ -2246,8 +2373,12 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   });
 
   // Test handle, only on a local dev server.
-  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__anyfield = { Vid: Vid, S: S, addSet: addSet, renderHome: renderHome, save: save, CLog: CLog, openVideo: openVideo, syncSettings: syncSettings };
+  if (!NATIVE && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__anyfield = { Vid: Vid, S: S, addSet: addSet, renderHome: renderHome, save: save, CLog: CLog, openVideo: openVideo, syncSettings: syncSettings };
 
+  (function () {
+    var a = $('#getApp'), apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+    if (APP_LINK && apple && !NATIVE) { a.href = APP_LINK; a.hidden = false; }
+  })();
   renderHome();
   initCloud();
   if (!S.setups.length && !Object.keys(S.log).length && !pendingJoin()) setTimeout(function () { if (!Cloud.on) toast('Start by setting up your camera'); }, 900);

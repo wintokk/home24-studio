@@ -1,0 +1,10 @@
+node_modules/
+app-www/
+.cache/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/DerivedData/
+*.xcuserstate
+xcuserdata/
+ios/App/CapApp-SPM/symlinks/
