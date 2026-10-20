@@ -633,6 +633,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
     <button class="btn plain press" id="clogShare" type="button" style="align-self:flex-start;width:auto;height:42px" hidden>Share log</button></div>
   <div class="row"><span class="lbl">Your log</span><button class="btn plain press" id="exportBtn" type="button" style="width:auto;height:42px">Export CSV</button></div>
   <p class="hint" id="storeHint">Your log and setups are stored on this device only.</p>
+  <p class="hint" style="margin-top:10px"><a id="privacyLink" href="privacy.html" target="_blank" rel="noopener" style="color:var(--ink-2)">Privacy</a></p>
 </div>
 
 <div class="sheet glass" id="setupsSheet" role="dialog" aria-modal="true" aria-labelledby="setupsTitle" hidden>
@@ -2378,6 +2379,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:28px}
   (function () {
     var a = $('#getApp'), apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
     if (APP_LINK && apple && !NATIVE) { a.href = APP_LINK; a.hidden = false; }
+    if (NATIVE) $('#privacyLink').href = WEB_URL + 'privacy.html';
   })();
   renderHome();
   initCloud();

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anyfield privacy</title>
+<meta name="description" content="What Anyfield stores, where, and how to delete it.">
+<meta name="theme-color" content="#0B120D">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+:root{--room:#0B120D;--ink:#EEF2E4;--ink-2:rgba(238,242,228,.72);--ink-3:rgba(238,242,228,.6);--ink-4:rgba(238,242,228,.12);--accent:#B4DB62;--accent-hi:#D9F29A;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:var(--room);color:var(--ink);font:16px/1.55 var(--ui);-webkit-text-size-adjust:100%}
+main{max-width:680px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 36px) 20px calc(env(safe-area-inset-bottom,0px) + 48px)}
+a{color:var(--accent-hi)}
+h1{font-size:30px;line-height:1.15;letter-spacing:-.02em;margin:0 0 6px}
+h2{font-size:19px;margin:34px 0 8px;letter-spacing:-.01em}
+p,li{color:var(--ink-2)}
+ul{padding-left:20px}
+li{margin:6px 0}
+b{color:var(--ink);font-weight:650}
+.meta{color:var(--ink-3);font-size:14px;margin:0 0 26px}
+.back{display:inline-block;margin-bottom:26px;text-decoration:none;font-weight:600}
+hr{border:0;border-top:1px solid var(--ink-4);margin:34px 0}
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="./">← Anyfield</a>
+<h1>Privacy</h1>
+<p class="meta">Applies to the Anyfield website (anyfield.web.app) and the Anyfield iOS app. Last updated October 20, 2026.</p>
+
+<p>Anyfield counts push-ups with your phone's camera. The counting happens on your device. Nothing is shown to advertisers, there is no tracking or analytics, and nothing is sold.</p>
+
+<h2>The camera</h2>
+<ul>
+  <li>Camera frames are processed on your device by a body-tracking model to find your shoulders, arms and head. Frames are never uploaded.</li>
+  <li><b>Set videos</b> are off by default. If you turn them on, videos are stored on your device only. They leave it only if you share or save them yourself.</li>
+</ul>
+
+<h2>Without an account</h2>
+<p>Your push-up log, camera setups, settings and count log are stored on your device only.</p>
+
+<h2>With an account</h2>
+<p>You can sign in with Apple or Google to sync across devices and join groups. The account is provided by Google Firebase. We then store:</p>
+<ul>
+  <li><b>Account:</b> your name, email address and profile photo link from Apple or Google, and an account ID. With Sign in with Apple you can hide your email address.</li>
+  <li><b>Your log:</b> each set's time and number of push-ups, daily totals, your goal and depth setting, and your camera setups (calibration numbers, no images).</li>
+  <li><b>Count log</b> (on by default, can be turned off in Settings): for your last 20 sets, the numbers the counter worked from, such as body position over time and when each count happened. No images or video. It's used to find and fix counting mistakes.</li>
+  <li><b>Groups:</b> the groups you join. Members of a group see your name, photo and daily totals, never your individual sets.</li>
+</ul>
+<p>This data is stored in Google Cloud (Firebase, United States) and is readable only by you and by the developer for running and fixing the service.</p>
+
+<h2>Deleting your data</h2>
+<ul>
+  <li><b>Everything in your account:</b> Settings → Delete account removes your log, setups, count log, group memberships and scores, and the account itself.</li>
+  <li><b>On your device:</b> delete videos in Settings, turn off the count log (which deletes it), or remove the app or the site's data.</li>
+</ul>
+
+<h2>Children</h2>
+<p>Anyfield is not directed at children under 13.</p>
+
+<h2>Changes and contact</h2>
+<p>If this policy changes, the date above changes. Questions: <a href="https://github.com/wintokk/home24-studio/issues">open an issue</a>.</p>
+<hr>
+<p class="meta">Anyfield</p>
+</main>
+</body>
+</html>

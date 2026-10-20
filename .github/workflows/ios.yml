@@ -31,6 +31,8 @@ jobs:
   simulator:
     runs-on: macos-15
     timeout-minutes: 40
+    permissions:
+      contents: write   # publishes the screenshot to the ci-shots branch
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -62,16 +64,22 @@ jobs:
           xcrun simctl boot "$UDID"; xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/App.app
           mkdir -p shots
-          xcrun simctl launch "$UDID" app.anyfield
+          xcrun simctl launch --terminate-running-process --stdout="$PWD/shots/console.txt" --stderr="$PWD/shots/console.txt" "$UDID" app.anyfield
           sleep 25
           xcrun simctl io "$UDID" screenshot shots/home.png
-          xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "App"' > shots/app-log.txt || true
-          grep -E "⚡️|\[error\]|\[warn\]|ERROR|Error" shots/app-log.txt | tail -60 || true
+          xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "App"' > shots/system-log.txt || true
+          echo "--- app console"; tail -80 shots/console.txt || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: ios-simulator
           path: shots/
+      - name: Publish the screenshot and console to the ci-shots branch
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          cd shots && git init -q -b ci-shots && git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "iOS simulator ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-shots
 
   testflight:
     needs: simulator

@@ -330,6 +330,35 @@ Everything is stored under one `localStorage` key, `pushStudio.v1`:
 
 Data is tied to the device and to the site address, so changing the address starts a fresh log. On iOS, add the app to the home screen so Safari doesn't clear site storage after a week of not opening it. Use Settings → Export CSV for backups.
 
+## iOS app
+
+The iOS app is the same page in a native shell ([Capacitor](https://capacitorjs.com) 8). The counter, UI and data model are shared. The page checks `Capacitor.isNativePlatform()` (`NATIVE`) and changes only what has to be different in an app:
+
+| | Website | App |
+|---|---|---|
+| MediaPipe, pose models, Firebase SDK, font | CDNs | bundled in the app by `scripts/build-app-www.js`, so counting works offline |
+| Sign-in | Google popup or redirect | a sheet with **Continue with Apple** and **Continue with Google**. The native SDKs sign in through `@capacitor-firebase/authentication` (`skipNativeAuth`), and the token signs in Firebase's JS SDK with `signInWithCredential`. Auth uses `initializeAuth` with IndexedDB persistence. |
+| Screen stays on during a set | Wake Lock API | `@capacitor-community/keep-awake` |
+| Rep feedback | sound or voice | sound or voice, plus a haptic tick (`@capacitor/haptics`) |
+| Save video, share the count log, invite | Web Share or download | the iOS share sheet (`@capacitor/filesystem` + `@capacitor/share`) |
+| Invite links | this site | always `https://anyfield.web.app/?join=…` |
+
+Both have **Settings → Delete account**, which deletes the Firestore data (sets, days, setups, count log, group memberships and scores, profile) and then the Firebase account. If the last sign-in is older than 4 minutes, it asks you to sign in again first. App Store review requires this (guideline 5.1.1(v)), and it requires Sign in with Apple next to Google (4.8). The privacy policy is `public/privacy.html`.
+
+**Project:** `capacitor.config.json` (app id `app.anyfield`), `ios/App` (Xcode project, Swift Package Manager), `ios/App/App/Info.plist` (camera and Photos usage text, portrait on iPhone, no encryption export), `App.entitlements` (Sign in with Apple), and an app icon redrawn at 1024 px from the web icon.
+
+**Build:** `npm ci && npm run app:sync`, then open `ios/App/App.xcodeproj` in Xcode on a Mac. No Mac is needed for CI: `.github/workflows/ios.yml` runs on GitHub's macOS runners.
+- **simulator:** tests, builds the app bundle, builds for the iOS Simulator without signing, launches the app, and saves a screenshot and the app log as the `ios-simulator` artifact.
+- **testflight:** archives a Release build, signs it automatically with an App Store Connect API key, and uploads it. The build number is 1000 + the run number. Until the secrets below exist, it only prints a notice.
+
+**To ship (needs the Apple Developer Program, $99/year):**
+1. **Enroll** at developer.apple.com, as an individual or as the LLC (which needs a D-U-N-S number).
+2. **Register the app:** Certificates, Identifiers & Profiles → Identifiers → **+** → App IDs, bundle ID `app.anyfield`, with **Sign in with Apple** checked. Then in App Store Connect → Apps → **+** → New App, pick that bundle ID.
+3. **API key for CI:** App Store Connect → Users and Access → Integrations → App Store Connect API → Team Keys → **+**, with the App Manager role. Download the `.p8` file (it can be downloaded only once).
+4. **GitHub secrets** (repo → Settings → Secrets and variables → Actions): `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (the whole `.p8` file), and `APPLE_TEAM_ID` (developer account → Membership). The next push to `main` uploads a build.
+5. **Firebase:** the iOS app `app.anyfield` is registered in project `home24-studio`. Its `GoogleService-Info.plist` is in `ios/App/App`, and its `REVERSED_CLIENT_ID` is a URL scheme in `Info.plist`. The Apple provider is turned on in Firebase Authentication.
+6. **TestFlight:** add an external testing group with a public link. The first build goes through Beta App Review. Put the link in `APP_LINK` in `public/index.html` and the website shows **Get the app** on Apple devices. After App Store release, change `APP_LINK` to the App Store link.
+
 ## Run
 
 The camera needs HTTPS, except on `localhost`.
